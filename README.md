@@ -5,3 +5,5 @@
 • Deploys contract
 
 • Self-transfers
+
+• Upload File 
