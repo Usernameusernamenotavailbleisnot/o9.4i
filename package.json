@@ -1,0 +1,24 @@
+{
+  "name": "0g-auto",
+  "version": "1.0.0",
+  "description": "o9.4i",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [
+    "blockchain"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.6.7",
+    "chalk": "^4.1.2",
+    "cli-progress": "^3.12.0",
+    "ethers": "^6.11.1",
+    "https-proxy-agent": "^7.0.2",
+    "lodash": "^4.17.21",
+    "ora": "^5.4.1",
+    "web3": "^4.5.0"
+  }
+}
