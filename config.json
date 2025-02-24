@@ -1,0 +1,15 @@
+{
+    "enable_faucet": false,
+    "enable_contract_deploy": true,
+    "enable_transfer": true,
+    "enable_storage": true,
+    "gas_price_multiplier": 1.1,
+    "max_retries": 5,
+    "base_wait_time": 10,
+    "transfer_amount_percentage": 90,
+    "storage_network": "turbo",
+    "storage_config": {
+        "min_files": 2,
+        "max_files": 3
+    }
+}
