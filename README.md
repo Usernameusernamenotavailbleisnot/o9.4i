@@ -1,4 +1,4 @@
-# 0g.ai
+# 09.ai
 
 • Claims faucet
 
