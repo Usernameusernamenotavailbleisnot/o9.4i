@@ -1,5 +1,5 @@
 {
-  "name": "0g-auto",
+  "name": "o9.4i",
   "version": "1.0.0",
   "description": "o9.4i",
   "main": "index.js",
@@ -7,7 +7,8 @@
     "start": "node index.js"
   },
   "keywords": [
-    "blockchain"
+    "blockchain",
+    "nft"
   ],
   "author": "",
   "license": "ISC",
@@ -19,6 +20,7 @@
     "https-proxy-agent": "^7.0.2",
     "lodash": "^4.17.21",
     "ora": "^5.4.1",
+    "solc": "^0.8.28",
     "web3": "^4.5.0"
   }
 }
