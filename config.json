@@ -1,6 +1,5 @@
 {
     "enable_faucet": false,
-    "enable_contract_deploy": true,
     "enable_transfer": true,
     "enable_storage": true,
     "gas_price_multiplier": 1.1,
@@ -11,5 +10,37 @@
     "storage_config": {
         "min_files": 2,
         "max_files": 3
+    },
+    "nft": {
+        "enable_nft": true,
+        "mint_count": {
+            "min": 2,
+            "max": 10
+        },
+        "burn_percentage": 20,
+        "supply": {
+            "min": 100,
+            "max": 1000
+        }
+    },
+    "contract": {
+        "enable_contract_deploy": true,
+        "contract_interactions": {
+            "enabled": true,
+            "count": {
+                "min": 5,
+                "max": 10
+            },
+            "types": ["setValue", "increment", "decrement", "reset", "contribute"]
+        }
+    },
+    "erc20": {
+        "enable_erc20": true,
+        "mint_amount": {
+            "min": 1000000,
+            "max": 10000000
+        },
+        "burn_percentage": 10,
+        "decimals": 18
     }
 }
