@@ -10,10 +10,14 @@ const path = require('path');
 const crypto = require('crypto');
 const _ = require('lodash');
 
+// Import modules from src directory
+const NFTManager = require('./src/nft_manager');
+const ContractDeployer = require('./src/deploy_contract');
+const ERC20TokenDeployer = require('./src/erc20_token');
+
 // Default configuration
 const DEFAULT_CONFIG = {
     "enable_faucet": true,
-    "enable_contract_deploy": true,
     "enable_transfer": true,
     "enable_storage": true,
     "gas_price_multiplier": 1.1,
@@ -26,10 +30,6 @@ const DEFAULT_CONFIG = {
         "max_files": 10
     }
 };
-
-const SIMPLE_CONTRACT_BYTECODE = "608060405234801561001057600080fd5b50610150806100206000396000f3fe608060405234801561001057600080fd5b50600436106100365760003560e01c806360fe47b11461003b5780636d4ce63c14610057575b600080fd5b610055600480360381019061005091906100c3565b610075565b005b61005f61007f565b60405161006c91906100ff565b60405180910390f35b8060008190555050565b60008054905090565b600080fd5b6000819050919050565b6100a08161008d565b81146100ab57600080fd5b50565b6000813590506100bd81610097565b92915050565b6000602082840312156100d9576100d8610088565b5b60006100e7848285016100ae565b91505092915050565b6100f98161008d565b82525050565b600060208201905061011460008301846100f0565b9291505056fe";
-
-const SIMPLE_ERC20_BYTECODE = "60806040526012600560006101000a81548160ff021916908360ff1602179055503480156200002d57600080fd5b506040518060400160405280600481526020017f544553540000000000000000000000000000000000000000000000000000000081525060409051806040016040528060048152602001600481525081600390805190602001906200009592919062000149565b508060049080519060200190620000ae92919062000149565b50505062000248565b828054600181600116156101000203166002900490600052602060002090601f016020900481019282601f10620000f057805160ff191683800117855562000121565b8280016001018555821562000121579182015b828111156200012057825182559160200191906001019062000103565b5b50905062000130919062000134565b5090565b5b808211156200014557600081600090555060010162000135565b5090565b828054600181600116156101000203166002900490600052602060002090601f016020900481019282601f106200018c57805160ff1916838001178555620001bd565b82800160010185558215620001bd579182015b82811115620001bc578251825591602001919060010190620001a0565b5b509050620001cc9190620001d0565b5090565b5b80821115620001eb576000816000905550600101620001d1565b5090565b600081519050919050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052604160045260246000fd5b7f4e487b7100000000000000000000000000000000000000000000000000000000600052602260045260246000fd5b60006002820490506001821680620002735760006000905092915050565b6000819050919050565b600060028204905060018216806200029657600080905092915050565b6000819050919050565b6000620002ad82620002a3565b915062000281565b6000620002c082620002a3565b9150620002cd83620002a3565b925082620002e057620002df620002d1565b5b828204905092915050565b6000620002f882620002a3565b91506200030583620002a3565b9250827fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff038211156200033d576200033c620002d1565b5b828201905092915050565b600082825260208201905092915050565b600081905092915050565b600082825260208201905092915050565b60005b838110156200039457808201518184015260208101905062000377565b60008484015250505050565b6000620003ad826200035d565b620003b981856200036d565b9350620003cb81856020860162000378565b80840191505092915050565b6000620003e582846200039f565b915081905092915050565b6000620003fd826200035d565b6200040981856200034d565b93506200041b81856020860162000378565b6200042681620003a0565b840191505092915050565b6000602082019050818103600083015262000452818462000440565b905092915050565b600060208284031215620004725762000471620004be565b5b600062000482848285016200046c565b91505092915050565b60006200049782620004a8565b9050919050565b60008115159050919050565b600073ffffffffffffffffffffffffffffffffffffffff82169050919050565b600080fd5b6000819050919050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601160045260246000fd5b6200051c81620004e9565b81146200052857600080fd5b50565b60006200053b82620004e9565b91506200054883620004e9565b925082821015620005615762000560620004fa565b5b828203905092915050565b600062000579826200035d565b6200058581856200034d565b93506200059781856020860162000378565b620005a281620003a0565b840191505092915050565b60006020820190508181036000830152620005c981846200056c565b905092915050565b600062000643905600a265627a7a72305820f9c5da1da" + "0".repeat(40);
 
 function getTimestamp(walletNum = null) {
     const now = new Date();
@@ -523,57 +523,6 @@ class EnhancedFaucetClaimer {
         }
     }
 
-    async deployContract(privateKey) {
-        if (!this.config.enable_contract_deploy) {
-            return true;
-        }
-
-        console.log(chalk.blue.bold(`${getTimestamp(this.currentWalletNum)} Deploying random contract...`));
-        try {
-            if (!privateKey.startsWith('0x')) {
-                privateKey = '0x' + privateKey;
-            }
-
-            const account = this.web3.eth.accounts.privateKeyToAccount(privateKey);
-            const nonce = await this.web3.eth.getTransactionCount(account.address);
-
-            // Add 0x prefix to bytecode if not present
-            const bytecode = SIMPLE_CONTRACT_BYTECODE.startsWith('0x') ? 
-                SIMPLE_CONTRACT_BYTECODE : 
-                '0x' + SIMPLE_CONTRACT_BYTECODE;
-
-            // Convert gas price to BigInt and calculate
-            const gasPrice = BigInt(await this.web3.eth.getGasPrice());
-            const adjustedGasPrice = gasPrice * BigInt(Math.floor(this.config.gas_price_multiplier * 100)) / BigInt(100);
-
-            const transaction = {
-                nonce: nonce,
-                from: account.address,
-                to: null,
-                value: '0',
-                data: bytecode,
-                chainId: 16600,
-                gasPrice: adjustedGasPrice.toString()
-            };
-
-            // Estimate gas and set with buffer
-            const estimatedGas = await this.web3.eth.estimateGas(transaction);
-            transaction.gas = Math.floor(Number(estimatedGas) * 1.1).toString();
-
-            // Sign the transaction
-            const signed = await this.web3.eth.accounts.signTransaction(transaction, privateKey);
-            const receipt = await this.web3.eth.sendSignedTransaction(signed.rawTransaction);
-            
-            console.log(chalk.green(`${getTimestamp(this.currentWalletNum)} ✓ Contract deployed at: ${receipt.contractAddress}`));
-            console.log(chalk.green(`${getTimestamp(this.currentWalletNum)} ✓ Transaction hash: ${receipt.transactionHash}`));
-            return true;
-            
-        } catch (error) {
-            console.log(chalk.red(`${getTimestamp(this.currentWalletNum)} ✗ Error deploying contract: ${error.message}`));
-            return false;
-        }
-    }
-
     async transferToSelf(privateKey) {
         if (!this.config.enable_transfer) {
             return true;
@@ -687,7 +636,6 @@ class EnhancedFaucetClaimer {
     async processWallet(privateKey) {
         const steps = [
             [this.claimFaucet.bind(this), "enable_faucet", "Claiming faucet"],
-            [this.deployContract.bind(this), "enable_contract_deploy", "Deploying contract"],
             [this.transferToSelf.bind(this), "enable_transfer", "Transferring A0GI"],
             [this.uploadRandomFiles.bind(this), "enable_storage", "Uploading random files"]
         ];
@@ -779,9 +727,55 @@ async function main() {
                 if (address) {
                     console.log(chalk.green(`${getTimestamp(i + 1)} ✓ Processing address: ${address}`));
 
-                    const success = await claimer.processWallet(pk);
-                    if (!success) {
-                        console.log(chalk.red(`${getTimestamp(i + 1)} ✗ Failed to process wallet completely`));
+                    // Process standard wallet operations (faucet, transfer, storage)
+                    const standardSuccess = await claimer.processWallet(pk);
+                    if (!standardSuccess) {
+                        console.log(chalk.red(`${getTimestamp(i + 1)} ✗ Failed to process standard operations completely`));
+                    }
+                    
+                    // Process contract operations (new module)
+                    try {
+                        console.log(chalk.blue.bold(`\n=== Running Contract Operations for Wallet ${i + 1} ===\n`));
+                        
+                        // Initialize contract deployer with wallet's private key and current config
+                        const contractDeployer = new ContractDeployer(pk, claimer.config.contract || {});
+                        contractDeployer.setWalletNum(i + 1);
+                        
+                        // Execute contract operations (compile, deploy, interact)
+                        await contractDeployer.executeContractOperations();
+                        
+                    } catch (error) {
+                        console.log(chalk.red(`${getTimestamp(i + 1)} ✗ Error in contract operations: ${error.message}`));
+                    }
+                    
+                    // Process ERC20 token operations
+                    try {
+                        console.log(chalk.blue.bold(`\n=== Running ERC20 Token Operations for Wallet ${i + 1} ===\n`));
+                        
+                        // Initialize ERC20 token deployer with wallet's private key and current config
+                        const erc20Deployer = new ERC20TokenDeployer(pk, claimer.config);
+                        erc20Deployer.setWalletNum(i + 1);
+                        
+                        // Execute ERC20 token operations (compile, deploy, mint, burn)
+                        await erc20Deployer.executeTokenOperations();
+                        
+                    } catch (error) {
+                        console.log(chalk.red(`${getTimestamp(i + 1)} ✗ Error in ERC20 token operations: ${error.message}`));
+                    }
+                    
+                    // Process NFT operations
+                    try {
+                        console.log(chalk.blue.bold(`\n=== Running NFT Operations for Wallet ${i + 1} ===\n`));
+                        
+                        // Initialize NFT manager with wallet's private key and current config
+                        const nftManager = new NFTManager(pk, claimer.config);
+                        nftManager.setWalletNum(i + 1);
+                        
+                        // Execute NFT operations (compile, deploy, mint, burn)
+                        await nftManager.executeNFTOperations();
+                        
+                    } catch (error) {
+                        console.log(chalk.red(`${getTimestamp(i + 1)} ✗ Error in NFT operations: ${error.message}`));
                     }
                 }
 
