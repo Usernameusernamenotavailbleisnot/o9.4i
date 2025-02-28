@@ -1,5 +1,5 @@
 {
-  "enable_faucet": false,
+  "enable_faucet": true,
   "enable_transfer": true,
   "enable_storage": true,
   "gas_price_multiplier": 1.1,
