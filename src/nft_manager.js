@@ -17,15 +17,41 @@ function getTimestamp(walletNum = null) {
 
 // NFT name generators for popular web3/meme NFT style collections
 const NFT_NAME_PREFIXES = [
+    // Original list
     'Crypto', 'Bored', 'Mutant', 'Azuki', 'Doodle', 'Pudgy', 'Cool', 'Lazy', 'Cyber', 'Meta',
     'Pixel', 'Art', 'Punk', 'Moon', 'Ape', 'Chimp', 'Digital', 'Virtual', 'Token', 'Chain',
-    'Meme', 'Pepe', 'Doge', 'Shib', 'Rare', 'Unique', 'Space', 'DeGen', 'Based', 'Alpha'
+    'Meme', 'Pepe', 'Doge', 'Shib', 'Rare', 'Unique', 'Space', 'DeGen', 'Based', 'Alpha',
+    
+    // Additional NFT-focused prefixes
+    'Yacht', 'Invisible', 'Alien', 'Robot', 'Zombie', 'Demon', 'Angel', 'God', 'Goddess', 'Wizard',
+    'Witch', 'Warlock', 'Mage', 'Knight', 'Samurai', 'Ninja', 'Pirate', 'Viking', 'Cowboy', 'Astronaut',
+    'Creepy', 'Cute', 'Silly', 'Funny', 'Happy', 'Sad', 'Angry', 'Chill', 'Hyped', 'Stoned',
+    'Drunk', 'High', 'Low', 'Fast', 'Slow', 'Big', 'Small', 'Fat', 'Thin', 'Tall',
+    'Short', 'Wide', 'Narrow', 'Deep', 'Shallow', 'Rich', 'Poor', 'Smart', 'Dumb', 'Wise',
+    'Foolish', 'Brave', 'Cowardly', 'Strong', 'Weak', 'Tough', 'Soft', 'Hard', 'Gentle', 'Rough',
+    'Smooth', 'Bumpy', 'Flat', 'Round', 'Square', 'Triangle', 'Circle', 'Rectangle', 'Oval', 'Diamond',
+    '8Bit', '16Bit', 'Voxel', 'Anime', 'Manga', 'Comic', 'Cartoon', 'Realistic', 'Abstract', 'Surreal',
+    'Impressionist', 'Expressionist', 'Cubist', 'Minimalist', 'Maximalist', 'Futurist', 'Retro', 'Vintage', 'Modern', 'Ancient',
+    'Medieval', 'Renaissance', 'Baroque', 'Gothic', 'Victorian', 'Edwardian', 'Art Deco', 'Art Nouveau', 'Modernist', 'Postmodern'
 ];
 
 const NFT_NAME_SUFFIXES = [
+    // Original list
     'Apes', 'Monkeys', 'Punks', 'Cats', 'Dogs', 'Bears', 'Club', 'Society', 'Gang', 'Legends',
     'Collection', 'Worlds', 'Metaverse', 'Universe', 'Pets', 'Friends', 'Heroes', 'Squad', 'Crew', 'Team',
-    'Tokens', 'NFTs', 'Assets', 'Items', 'Frens', 'Collectibles', 'Art', 'Yacht', 'League', 'Kingdom'
+    'Tokens', 'NFTs', 'Assets', 'Items', 'Frens', 'Collectibles', 'Art', 'Yacht', 'League', 'Kingdom',
+    
+    // Additional NFT-focused suffixes
+    'Clan', 'Tribe', 'Nation', 'Empire', 'Republic', 'Dominion', 'Realm', 'Dimension', 'Multiverse', 'Omniverse',
+    'Collective', 'Cooperative', 'Alliance', 'Federation', 'Union', 'Coalition', 'Consortium', 'Syndicate', 'Cartel', 'Mafia',
+    'Family', 'Brotherhood', 'Sisterhood', 'Fellowship', 'Circle', 'Ring', 'Guild', 'Lodge', 'Chapter', 'Order',
+    'Cult', 'Covenant', 'Pact', 'Accord', 'Treaty', 'Council', 'Senate', 'Parliament', 'Congress', 'Assembly',
+    'Gathering', 'Meeting', 'Summit', 'Convention', 'Conference', 'Symposium', 'Colloquium', 'Seminar', 'Workshop', 'Class',
+    'Academy', 'School', 'College', 'University', 'Institute', 'Foundation', 'Association', 'Organization', 'Corporation', 'Enterprise',
+    'Venture', 'Startup', 'Business', 'Company', 'Firm', 'Agency', 'Bureau', 'Office', 'Department', 'Division',
+    'Factory', 'Industry', 'Workshop', 'Studio', 'Laboratory', 'Observatory', 'Sanctuary', 'Refuge', 'Haven', 'Paradise',
+    'Utopia', 'Dystopia', 'Apocalypse', 'Wasteland', 'Frontier', 'Wilderness', 'Jungle', 'Forest', 'Desert', 'Tundra',
+    'Mountain', 'Valley', 'Canyon', 'Gorge', 'Ravine', 'Plateau', 'Plain', 'Meadow', 'Field', 'Garden'
 ];
 
 // NFT Contract template
