@@ -9,11 +9,13 @@ const ora = require('ora');
 const path = require('path');
 const crypto = require('crypto');
 const _ = require('lodash');
+const yaml = require('js-yaml');
 
 // Import modules from src directory
 const NFTManager = require('./src/nft_manager');
 const ContractDeployer = require('./src/deploy_contract');
 const ERC20TokenDeployer = require('./src/erc20_token');
+const TokenSwapper = require('./src/token_swapper');
 
 // Default configuration
 const DEFAULT_CONFIG = {
@@ -30,6 +32,26 @@ const DEFAULT_CONFIG = {
         "max_files": 10
     }
 };
+
+// Load configuration from YAML or JSON
+async function loadConfig() {
+    try {
+        // Try to load JSON config
+        const jsonExists = await fs.access('config.json').then(() => true).catch(() => false);
+        if (jsonExists) {
+            console.log(chalk.green(`${getTimestamp()} ✓ Found config.json`));
+            const jsonContent = await fs.readFile('config.json', 'utf8');
+            return JSON.parse(jsonContent);
+        }
+        
+        console.log(chalk.yellow(`${getTimestamp()} ⚠ No configuration file found, using defaults`));
+        return DEFAULT_CONFIG;
+    } catch (error) {
+        console.log(chalk.red(`${getTimestamp()} ✗ Error loading configuration: ${error.message}`));
+        return DEFAULT_CONFIG;
+    }
+}
+
 
 function getTimestamp(walletNum = null) {
     const now = new Date();
@@ -209,15 +231,21 @@ class StorageUploader {
 }
 
 class EnhancedFaucetClaimer {
-    constructor(scrappeyApiKey) {
+    constructor(scrappeyApiKey, config = {}) {
         this.scrappeyApiKey = scrappeyApiKey;
         this.scrappeyUrl = 'https://publisher.scrappey.com/api/v1';
-        this.faucetUrl = 'https://faucet.0g.ai/api/faucet';
+        this.faucetUrl = 'https://992dkn4ph6.execute-api.us-west-1.amazonaws.com/';
         this.web3 = new Web3('https://evmrpc-testnet.0g.ai');
         // Set default config first
         this.config = DEFAULT_CONFIG;
         this.maxRetries = DEFAULT_CONFIG.max_retries;
         this.baseWaitTime = DEFAULT_CONFIG.base_wait_time;
+        // Merge with provided config
+        if (config) {
+            this.config = { ...DEFAULT_CONFIG, ...config };
+            this.maxRetries = this.config.max_retries;
+            this.baseWaitTime = this.config.base_wait_time;
+        }
         // Other initializations
         this.proxies = [];
         this.currentProxy = null;
@@ -226,23 +254,9 @@ class EnhancedFaucetClaimer {
     }
 
     async initialize() {
-        // Load config and proxies after construction
-        await this.loadConfig();
+        // Load proxies after construction
         this.proxies = await this.loadProxies();
-        // Update values from loaded config
-        this.maxRetries = this.config.max_retries;
-        this.baseWaitTime = this.config.base_wait_time;
         return this;
-    }
-
-    async loadConfig() {
-        try {
-            const configFile = await fs.readFile('config.json', 'utf8');
-            this.config = { ...DEFAULT_CONFIG, ...JSON.parse(configFile) };
-        } catch (error) {
-            console.log(chalk.yellow(`${getTimestamp()} ⚠ config.json not found, using default configuration`));
-            this.config = DEFAULT_CONFIG;
-        }
     }
 
     async loadProxies() {
@@ -392,30 +406,35 @@ class EnhancedFaucetClaimer {
     }
 
     async solveHcaptcha() {
-        console.log(chalk.blue.bold(`${getTimestamp(this.currentWalletNum)} Solving hCaptcha...`));
+        console.log(chalk.blue.bold(`${getTimestamp(this.currentWalletNum)} Solving hCaptcha with direct sitekey method...`));
         
         const headers = {
-            'Content-Type': 'application/json',
+            'Content-Type': 'application/json'
         };
         
         const params = {
-            'key': this.scrappeyApiKey,
+            'key': this.scrappeyApiKey
         };
         
         const proxy = this.getRandomProxy();
         
+        // Using the simplified direct sitekey approach from documentation
         const jsonData = {
             'cmd': 'request.get',
-            'url': 'https://faucet.0g.ai',
+            'url': 'https://hub.0g.ai',
             'dontLoadMainSite': true,
-            'filter': ['javascriptReturn'],
-            'browserActions': [{
-                'type': 'solve_captcha',
-                'captcha': 'hcaptcha',
-                'captchaData': {
-                    'sitekey': '914e63b4-ac20-4c24-bc92-cdb6950ccfde',
-                },
-            }],
+            'filter': [
+                'javascriptReturn'
+            ],
+            'browserActions': [
+                {
+                    'type': 'solve_captcha',
+                    'captcha': 'hcaptcha',
+                    'captchaData': {
+                        'sitekey': '1230eb62-f50c-4da4-a736-da5c3c342e8e'
+                    }
+                }
+            ]
         };
         
         if (proxy) {
@@ -441,11 +460,39 @@ class EnhancedFaucetClaimer {
             
             if (response.status === 200) {
                 const result = response.data;
-                if (result.solution && result.solution.javascriptReturn) {
+                
+                console.log(chalk.cyan(`${getTimestamp(this.currentWalletNum)} ℹ Captcha response received`));
+                
+                // The token should be directly in javascriptReturn based on this method
+                if (result.solution && result.solution.javascriptReturn && 
+                    Array.isArray(result.solution.javascriptReturn) && 
+                    result.solution.javascriptReturn.length > 0) {
+                    
                     const captchaToken = result.solution.javascriptReturn[0];
-                    console.log(chalk.green(`${getTimestamp(this.currentWalletNum)} ✓ Successfully got captcha solution`));
-                    return captchaToken;
+                    
+                    if (captchaToken && typeof captchaToken === 'string' && captchaToken.length > 20) {
+                        console.log(chalk.green(`${getTimestamp(this.currentWalletNum)} ✓ Successfully obtained captcha token`));
+                        console.log(chalk.cyan(`${getTimestamp(this.currentWalletNum)} ℹ Token starts with: ${captchaToken.substring(0, 15)}...`));
+                        return captchaToken;
+                    } else {
+                        console.log(chalk.yellow(`${getTimestamp(this.currentWalletNum)} ⚠️ Token in javascriptReturn appears invalid:`, captchaToken));
+                    }
                 }
+                
+                // Fallback checks for token in other possible locations
+                if (result.solution && result.solution.token) {
+                    console.log(chalk.green(`${getTimestamp(this.currentWalletNum)} ✓ Found token in solution.token`));
+                    return result.solution.token;
+                }
+                
+                if (result.token) {
+                    console.log(chalk.green(`${getTimestamp(this.currentWalletNum)} ✓ Found token directly in result.token`));
+                    return result.token;
+                }
+                
+                // Log the response structure for debugging
+                console.log(chalk.yellow(`${getTimestamp(this.currentWalletNum)} ⚠️ Could not find token in expected locations. Response structure:`));
+                console.log(JSON.stringify(result, null, 2));
             }
             
             console.log(chalk.red(`${getTimestamp(this.currentWalletNum)} ✗ Failed to get captcha solution`));
@@ -461,20 +508,32 @@ class EnhancedFaucetClaimer {
         if (!this.config.enable_faucet) {
             return true;
         }
-
+    
         try {
             const address = this.getAddressFromPk(privateKey);
             if (!address) {
                 return false;
             }
             
-            const captchaToken = await this.solveHcaptcha();
+            // Try to solve captcha up to 3 times
+            let captchaToken = null;
+            for (let attempt = 0; attempt < 3; attempt++) {
+                console.log(chalk.blue(`${getTimestamp(this.currentWalletNum)} Captcha attempt ${attempt+1}/3`));
+                captchaToken = await this.solveHcaptcha();
+                if (captchaToken) break;
+                
+                if (attempt < 2) {
+                    console.log(chalk.yellow(`${getTimestamp(this.currentWalletNum)} ⚠️ Captcha attempt ${attempt+1} failed, waiting before retry...`));
+                    await new Promise(resolve => setTimeout(resolve, 5000));
+                }
+            }
+            
             if (!captchaToken) {
-                console.log(chalk.red(`${getTimestamp(this.currentWalletNum)} ✗ Failed to solve captcha`));
+                console.log(chalk.red(`${getTimestamp(this.currentWalletNum)} ✗ Failed to solve captcha after multiple attempts`));
                 return false;
             }
             
-            console.log(chalk.blue.bold(`${getTimestamp(this.currentWalletNum)} Claiming faucet...`));
+            console.log(chalk.blue.bold(`${getTimestamp(this.currentWalletNum)} Claiming faucet with valid captcha token...`));
             
             const payload = {
                 "address": address,
@@ -482,42 +541,60 @@ class EnhancedFaucetClaimer {
                 "token": "A0GI"
             };
             
+            // Full set of headers matching browser request
             const headers = {
                 'Content-Type': 'application/json',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
-                'Origin': 'https://faucet.0g.ai',
-                'Referer': 'https://faucet.0g.ai/'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+                'Origin': 'https://hub.0g.ai',
+                'Referer': 'https://hub.0g.ai/',
+                'Accept': 'application/json, text/plain, */*',
+                'Accept-Language': 'en-US,en;q=0.6',
+                'Accept-Encoding': 'gzip, deflate, br, zstd',
+                'DNT': '1',
+                'Sec-Fetch-Dest': 'empty',
+                'Sec-Fetch-Mode': 'cors',
+                'Sec-Fetch-Site': 'cross-site',
+                'Priority': 'u=1, i',
+                'Sec-GPC': '1',
+                'Sec-Ch-Ua': '"Not(A:Brand";v="99", "Brave";v="133", "Chromium";v="133"',
+                'Sec-Ch-Ua-Mobile': '?0',
+                'Sec-Ch-Ua-Platform': '"Windows"'
             };
+            
+            console.log(chalk.cyan(`${getTimestamp(this.currentWalletNum)} ℹ Making faucet request for address: ${address}`));
             
             const { response, success } = await this.makeRequestWithRetry('POST', this.faucetUrl, {
                 headers,
                 data: payload
             });
             
-            if (!success || !response) return false;
+            if (!success || !response) {
+                console.log(chalk.red(`${getTimestamp(this.currentWalletNum)} ✗ No response from faucet request`));
+                return false;
+            }
             
             const responseData = response.data;
             
-            // Check for cooldown message
-            if (responseData.message && (responseData.message.includes('hours') || responseData.message.includes('hour'))) {
-                console.log(chalk.yellow(`${getTimestamp(this.currentWalletNum)} ⚠ ${responseData.message}`));
-                return true;  // Return True to skip retries and move to next task
-            }
+            // Skip detailed logging here since makeRequestWithRetry already logs the server response
             
-            // If it's a success (contains transaction hash)
-            if (responseData.message && (responseData.message.includes('hash:') || responseData.message.startsWith('0x'))) {
+            // Handle possible responses
+            if (responseData.message && responseData.message.includes("Invalid Captcha")) {
+                console.log(chalk.red(`${getTimestamp(this.currentWalletNum)} ✗ Invalid captcha response received`));
+                return false;  // Return false to allow retry
+            } else if (responseData.message && (responseData.message.includes('hours') || responseData.message.includes('hour') || responseData.message.includes('wait'))) {
+                console.log(chalk.yellow(`${getTimestamp(this.currentWalletNum)} ⚠ Rate limited: ${responseData.message}`));
+                return true;  // Return True to skip retries and move to next task
+            } else if (responseData.message && (responseData.message.includes('hash:') || responseData.message.startsWith('0x'))) {
                 const txHash = responseData.message.includes('hash:') ? 
                     responseData.message.split('hash:')[1].trim() : 
                     responseData.message;
                     
-                console.log(chalk.green(`${getTimestamp(this.currentWalletNum)} ✓ Success: https://chainscan-newton.0g.ai/tx/${txHash}`));
+                console.log(chalk.green(`${getTimestamp(this.currentWalletNum)} ✓ Success! Transaction: https://chainscan-newton.0g.ai/tx/${txHash}`));
                 return true;
+            } else {
+                console.log(chalk.red(`${getTimestamp(this.currentWalletNum)} ✗ Unexpected response: ${responseData.message || 'Unknown error'}`));
+                return false;
             }
-            
-            // For other errors
-            console.log(chalk.red(`${getTimestamp(this.currentWalletNum)} ✗ ${responseData.message || 'Unknown error'}`));
-            return false;
-            
         } catch (error) {
             console.log(chalk.red(`${getTimestamp(this.currentWalletNum)} ✗ Error claiming faucet: ${error.message}`));
             return false;
@@ -697,6 +774,11 @@ async function main() {
         console.log(chalk.blue.bold('\n=== 0g.ai - Next JP ===\n'));
 
         try {
+            // Load configuration (JSON only now)
+            const config = await loadConfig();
+            console.log(chalk.green(`${getTimestamp()} ✓ Configuration loaded`));
+            
+            // Rest of the code remains the same
             const privateKeys = (await fs.readFile('pk.txt', 'utf8'))
                 .split('\n')
                 .map(line => line.trim())
@@ -707,8 +789,8 @@ async function main() {
             const scrappeyApiKey = "";
             console.log(chalk.blue.bold(`${getTimestamp()} Initializing automation...`));
 
-            // Create and initialize the claimer
-            const claimer = await new EnhancedFaucetClaimer(scrappeyApiKey).initialize();
+            // Create and initialize the claimer with loaded config
+            const claimer = await new EnhancedFaucetClaimer(scrappeyApiKey, config).initialize();
 
             // Process wallets
             console.log(chalk.blue.bold(`\nProcessing ${privateKeys.length} wallets...\n`));
@@ -734,12 +816,27 @@ async function main() {
                         console.log(chalk.red(`${getTimestamp(i + 1)} ✗ Failed to process standard operations completely`));
                     }
                     
+                    // Process token operations (faucets and swaps)
+                    try {
+                        console.log(chalk.blue.bold(`\n=== Running Token Operations for Wallet ${i + 1} ===\n`));
+                        
+                        // Initialize token swapper with wallet's private key and current config
+                        const tokenSwapper = new TokenSwapper(pk, config.token_operations || {});
+                        tokenSwapper.setWalletNum(i + 1);
+                        
+                        // Execute token operations (claim faucets, perform swaps)
+                        await tokenSwapper.executeTokenOperations();
+                        
+                    } catch (error) {
+                        console.log(chalk.red(`${getTimestamp(i + 1)} ✗ Error in token operations: ${error.message}`));
+                    }
+                    
                     // Process contract operations (new module)
                     try {
                         console.log(chalk.blue.bold(`\n=== Running Contract Operations for Wallet ${i + 1} ===\n`));
                         
                         // Initialize contract deployer with wallet's private key and current config
-                        const contractDeployer = new ContractDeployer(pk, claimer.config.contract || {});
+                        const contractDeployer = new ContractDeployer(pk, config.contract || {});
                         contractDeployer.setWalletNum(i + 1);
                         
                         // Execute contract operations (compile, deploy, interact)
@@ -754,7 +851,7 @@ async function main() {
                         console.log(chalk.blue.bold(`\n=== Running ERC20 Token Operations for Wallet ${i + 1} ===\n`));
                         
                         // Initialize ERC20 token deployer with wallet's private key and current config
-                        const erc20Deployer = new ERC20TokenDeployer(pk, claimer.config);
+                        const erc20Deployer = new ERC20TokenDeployer(pk, config);
                         erc20Deployer.setWalletNum(i + 1);
                         
                         // Execute ERC20 token operations (compile, deploy, mint, burn)
@@ -769,7 +866,7 @@ async function main() {
                         console.log(chalk.blue.bold(`\n=== Running NFT Operations for Wallet ${i + 1} ===\n`));
                         
                         // Initialize NFT manager with wallet's private key and current config
-                        const nftManager = new NFTManager(pk, claimer.config);
+                        const nftManager = new NFTManager(pk, config);
                         nftManager.setWalletNum(i + 1);
                         
                         // Execute NFT operations (compile, deploy, mint, burn)
