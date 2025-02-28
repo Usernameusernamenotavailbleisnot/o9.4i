@@ -16,15 +16,41 @@ function getTimestamp(walletNum = null) {
 
 // Token name generators for popular meme/crypto tokens
 const TOKEN_NAME_PREFIXES = [
+    // Original list
     'Moon', 'Doge', 'Shib', 'Pepe', 'Ape', 'Baby', 'Safe', 'Floki', 'Elon', 'Mars',
     'Space', 'Rocket', 'Diamond', 'Crypto', 'Meme', 'Chad', 'Bull', 'Super', 'Mega', 'Meta',
-    'Ninja', 'Turbo', 'Lambo', 'Hodl', 'Pump', 'King', 'Based', 'Alpha', 'Sigma', 'Giga'
+    'Ninja', 'Turbo', 'Lambo', 'Hodl', 'Pump', 'King', 'Based', 'Alpha', 'Sigma', 'Giga',
+    
+    // Additional meme-focused prefixes
+    'Wojak', 'Stonk', 'Bonk', 'Chungus', 'Gigachad', 'Frog', 'Fren', 'Wen', 'Wagmi', 'Ngmi',
+    'Wojak', 'Tendies', 'Defi', 'Yolo', 'Coin', 'Fomo', 'Pixel', 'Gwei', 'Whale', 'Rug',
+    'Shill', 'Chimp', 'Fiat', 'Web3', 'Musk', 'Bezos', 'Zuck', 'Magic', 'Burn', 'Mint',
+    'Boomer', 'Zoomer', 'Kong', 'Gorilla', 'Monke', 'Karen', 'Bobo', 'Rich', 'Broke', 'Copium',
+    'Hopium', 'Pepsi', 'Coke', 'Kek', 'Lol', 'Rofl', 'Banana', 'Gold', 'Glitter', 'Cute',
+    'Hyper', 'Ultra', 'Maxi', 'Mini', 'Micro', 'Macro', 'Zeta', 'Omega', 'Delta', 'Gamma',
+    'Astro', 'Cosmic', 'Galaxy', 'Cat', 'Kitty', 'Hamster', 'Rat', 'Bear', 'Penguin', 'Panda',
+    'Bread', 'Pizza', 'Burger', 'Taco', 'Sushi', 'Ramen', 'Steak', 'Spicy', 'Sour', 'Sweet',
+    'Pepper', 'Salt', 'Cream', 'Ice', 'Fire', 'Water', 'Wind', 'Earth', 'Spirit', 'Soul',
+    'Knight', 'Wizard', 'Mage', 'Warrior', 'Paladin', 'Rogue', 'Hunter', 'Shaman', 'Druid', 'Priest'
 ];
 
 const TOKEN_NAME_SUFFIXES = [
+    // Original list
     'Coin', 'Token', 'Cash', 'Swap', 'Inu', 'Dao', 'Moon', 'Doge', 'Chain', 'Finance',
     'Protocol', 'Network', 'Exchange', 'Capital', 'Money', 'Rocket', 'Rise', 'Gains', 'Pump', 'Whale',
-    'Bit', 'Satoshi', 'Elon', 'Mars', 'Galaxy', 'Star', 'Nova', 'Verse', 'World', 'Gem'
+    'Bit', 'Satoshi', 'Elon', 'Mars', 'Galaxy', 'Star', 'Nova', 'Verse', 'World', 'Gem',
+    
+    // Additional meme-focused suffixes
+    'Floki', 'Zilla', 'Cum', 'Shit', 'Elixir', 'Potion', 'Pill', 'Pepe', 'Meme', 'Frog',
+    'Labs', 'Tech', 'Connect', 'Link', 'Base', 'Pad', 'Zone', 'Space', 'Punk', 'Ape',
+    'Kong', 'Yacht', 'Lambo', 'Ferrari', 'Mansion', 'Island', 'Empire', 'Republic', 'Nation', 'Club',
+    'Gang', 'Squad', 'Crew', 'Army', 'Legion', 'Force', 'Team', 'Guild', 'Clan', 'Tribe',
+    'Bank', 'Pay', 'Gold', 'Silver', 'Platinum', 'Diamond', 'Ruby', 'Emerald', 'Sapphire', 'Crystal',
+    'Cat', 'Dog', 'Bear', 'Bull', 'Lion', 'Tiger', 'Eagle', 'Shark', 'Wolf', 'Fox',
+    'Land', 'Universe', 'Dimension', 'Realm', 'Kingdom', 'Domain', 'Empire', 'Republic', 'State', 'Nation',
+    'X', 'AI', 'Web3', 'Web5', 'DeFi', 'NFT', 'Metaverse', 'Future', 'Classic', 'Ultra',
+    'Premium', 'Elite', 'Pro', 'Max', 'Plus', 'Lite', 'Mini', 'Micro', 'Mega', 'Giga',
+    'Infinity', 'Eternity', 'Forever', 'Supreme', 'Ultimate', 'Extreme', 'Hyper', 'Ultra', 'Super', 'Alpha'
 ];
 
 // ERC20 Contract template
