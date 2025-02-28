@@ -478,7 +478,8 @@ class EnhancedFaucetClaimer {
             
             const payload = {
                 "address": address,
-                "hcaptchaToken": captchaToken
+                "hcaptchaToken": captchaToken,
+                "token": "A0GI"
             };
             
             const headers = {
