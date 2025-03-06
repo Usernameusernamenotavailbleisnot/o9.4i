@@ -39,12 +39,34 @@ class TokenSwapper {
                     max: 0.0001
                 }
             },
+            // Default decimal precision for each token
+            decimal_precision: {
+                "USDT": 4,
+                "BTC": 6,
+                "ETH": 5
+            },
             default_gas: 100000, // Lower default gas as fallback
             max_retries: 3
         };
         
-        // Load configuration, merging with defaults
-        this.config = { ...this.defaultConfig, ...config };
+        // Load configuration, processing the nested token_operations object if it exists
+        if (config.token_operations) {
+            // Extract token_operations to top level while keeping other properties
+            this.config = {
+                ...this.defaultConfig,
+                ...config.token_operations,
+                // Keep non-token_operations properties from original config
+                ...Object.keys(config)
+                    .filter(key => key !== 'token_operations')
+                    .reduce((obj, key) => {
+                        obj[key] = config[key];
+                        return obj;
+                    }, {})
+            };
+        } else {
+            // Simple merge if no token_operations
+            this.config = { ...this.defaultConfig, ...config };
+        }
         
         // RPC connection
         this.rpcUrl = "https://16600.rpc.thirdweb.com/";
@@ -181,7 +203,7 @@ class TokenSwapper {
         return this.web3.utils.toWei(amount.toString(), 'ether');
     }
     
-    // Get a random amount between min and max configured for the token, converted to wei
+    // Get a random amount between min and max configured for the token, with proper decimal precision
     getRandomAmount(tokenSymbol) {
         if (!this.config.swap_amounts || !this.config.swap_amounts[tokenSymbol]) {
             // Use default values if not configured
@@ -204,7 +226,23 @@ class TokenSwapper {
         // Calculate random amount between min and max
         const range = max - min;
         const randomOffset = Math.random() * range;
-        const randomAmount = min + randomOffset;
+        let randomAmount = min + randomOffset;
+        
+        // Get decimal precision settings or use defaults
+        const decimalPrecisions = this.config.decimal_precision || {
+            "USDT": 4,
+            "BTC": 6, 
+            "ETH": 5
+        };
+        
+        // Get decimal precision for this token or use 4 as default
+        const precision = decimalPrecisions[tokenSymbol] || 4;
+        
+        // Format the amount to have the specified number of decimal places
+        // Using toFixed() to limit decimal places and parseFloat to remove trailing zeros
+        randomAmount = parseFloat(randomAmount.toFixed(precision));
+        
+        console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Random amount (precision: ${precision}): ${randomAmount} ${tokenSymbol}`));
         
         // Convert to wei format
         return this.convertToWei(randomAmount, tokenSymbol);
