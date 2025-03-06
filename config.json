@@ -69,6 +69,6 @@
       },
       "gas_price_multiplier": 1.2,
       "default_gas": 150000,
-      "max_retries": 3
+      "max_retries": 1
   }
 }
