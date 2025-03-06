@@ -39,8 +39,7 @@ class TokenSwapper {
                     max: 0.0001
                 }
             },
-            gas_price_multiplier: 1.1,
-            default_gas: 150000,
+            default_gas: 100000, // Lower default gas as fallback
             max_retries: 3
         };
         
@@ -48,7 +47,7 @@ class TokenSwapper {
         this.config = { ...this.defaultConfig, ...config };
         
         // RPC connection
-        this.rpcUrl = "https://evmrpc-testnet.0g.ai";
+        this.rpcUrl = "https://16600.rpc.thirdweb.com/";
         this.web3 = new Web3(this.rpcUrl);
         
         // Chain ID
@@ -121,13 +120,59 @@ class TokenSwapper {
     }
     
     async getGasPrice() {
-        const gasPrice = BigInt(await this.web3.eth.getGasPrice());
-        const multiplier = Math.floor(this.config.gas_price_multiplier * 100);
-        return (gasPrice * BigInt(multiplier) / BigInt(100)).toString();
+        try {
+            // Get the current gas price from the network
+            const gasPrice = await this.web3.eth.getGasPrice();
+            
+            // Use the network's suggested price without multiplier
+            const economicalGasPrice = BigInt(gasPrice);
+            
+            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Using network gas price: ${this.web3.utils.fromWei(gasPrice, 'gwei')} gwei`));
+            
+            return economicalGasPrice.toString();
+        } catch (error) {
+            console.log(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Error getting gas price: ${error.message}`));
+            
+            // Fallback to a low gas price
+            const fallbackGasPrice = this.web3.utils.toWei('1', 'gwei');
+            console.log(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Using fallback gas price: 1 gwei`));
+            
+            return fallbackGasPrice;
+        }
     }
     
     async getNonce() {
         return await this.web3.eth.getTransactionCount(this.account.address);
+    }
+    
+    // Method to get optimized gas estimation from the blockchain
+    async estimateGas(txObject) {
+        try {
+            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Optimizing gas estimation...`));
+            
+            // When estimating gas, we use a lower gas price to get a more accurate estimate
+            // Some networks will return a higher gas estimate if the gas price is too high
+            const lowGasPrice = this.web3.utils.toWei('1', 'gwei');
+            
+            // Create a modified transaction for estimation
+            const estimationTx = {
+                ...txObject,
+                gasPrice: lowGasPrice
+            };
+            
+            // Get the gas estimate from the blockchain
+            const estimatedGas = await this.web3.eth.estimateGas(estimationTx);
+            
+            // For maximum efficiency, we use the exact gas estimation
+            // This is what wallet apps do to minimize costs
+            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Using optimized gas limit: ${estimatedGas}`));
+            
+            return estimatedGas;
+        } catch (error) {
+            console.log(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Gas estimation failed: ${error.message}`));
+            console.log(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Using default gas: ${this.config.default_gas}`));
+            return this.config.default_gas;
+        }
     }
     
     // Convert normal decimal amount to wei format based on token decimals
@@ -176,18 +221,27 @@ class TokenSwapper {
         console.log(chalk.blue(`${getTimestamp(this.walletNum)} Claiming ${tokenSymbol} from faucet...`));
         
         try {
-            // Build transaction
+            // Build transaction base
             const nonce = await this.getNonce();
             const gasPrice = await this.getGasPrice();
             
-            const tx = {
+            // Transaction template for gas estimation
+            const txTemplate = {
                 from: this.account.address,
                 to: contractAddress,
                 data: this.functionSignatures.faucet,
-                gas: this.config.default_gas,
-                gasPrice: gasPrice,
                 nonce: nonce,
                 chainId: this.chainId
+            };
+            
+            // Dynamically estimate gas exactly from the blockchain
+            const gasLimit = await this.estimateGas(txTemplate);
+            
+            // Create transaction with only legacy gas parameters
+            const tx = {
+                ...txTemplate,
+                gas: gasLimit,
+                gasPrice: gasPrice
             };
             
             // Sign and send transaction
@@ -240,23 +294,27 @@ class TokenSwapper {
             // Prepare approval transaction
             const approveTx = tokenContract.methods.approve(this.dexRouter, approvalAmount);
             
-            // Build transaction
+            // Build transaction base
             const nonce = await this.getNonce();
             const gasPrice = await this.getGasPrice();
             
-            // Estimate gas
-            const estimatedGas = await approveTx.estimateGas({
-                from: this.account.address
-            });
-            
-            const tx = {
+            // Transaction template for gas estimation
+            const txTemplate = {
                 from: this.account.address,
                 to: tokenAddress,
                 data: approveTx.encodeABI(),
-                gas: Math.floor(Number(estimatedGas) * 1.2), // 20% buffer
-                gasPrice: gasPrice,
                 nonce: nonce,
                 chainId: this.chainId
+            };
+            
+            // Dynamically estimate gas exactly from the blockchain
+            const gasLimit = await this.estimateGas(txTemplate);
+            
+            // Create transaction with only legacy gas parameters
+            const tx = {
+                ...txTemplate,
+                gas: gasLimit,
+                gasPrice: gasPrice
             };
             
             // Sign and send transaction
@@ -334,22 +392,33 @@ class TokenSwapper {
             const deadline = Math.floor(Date.now() / 1000) + 3600;
             
             // Prepare transaction data
-            const directSwapTransaction = {
-                chainId: this.chainId,
-                data: "0x414bf389" + 
-                    this.tokenContracts[fromToken].slice(2).padStart(64, "0") +
-                    this.tokenContracts[toToken].slice(2).padStart(64, "0") +
-                    "0000000000000000000000000000000000000000000000000000000000000bb8" +
-                    this.account.address.slice(2).padStart(64, "0") +
-                    deadline.toString(16).padStart(64, "0") +
-                    BigInt(amount).toString(16).padStart(64, "0") +
-                    "0000000000000000000000000000000000000000000000000000000000000001" +
-                    "0000000000000000000000000000000000000000000000000000000000000000",
+            const swapData = "0x414bf389" + 
+                this.tokenContracts[fromToken].slice(2).padStart(64, "0") +
+                this.tokenContracts[toToken].slice(2).padStart(64, "0") +
+                "0000000000000000000000000000000000000000000000000000000000000bb8" +
+                this.account.address.slice(2).padStart(64, "0") +
+                deadline.toString(16).padStart(64, "0") +
+                BigInt(amount).toString(16).padStart(64, "0") +
+                "0000000000000000000000000000000000000000000000000000000000000001" +
+                "0000000000000000000000000000000000000000000000000000000000000000";
+            
+            // Transaction template for gas estimation
+            const txTemplate = {
                 from: this.account.address,
-                gas: "0x1e8480", // 2,000,000 
-                gasPrice: gasPrice,
-                nonce: "0x" + nonce.toString(16),
-                to: this.dexRouter
+                to: this.dexRouter,
+                data: swapData,
+                nonce: nonce,
+                chainId: this.chainId
+            };
+            
+            // Dynamically estimate gas exactly from the blockchain
+            const gasLimit = await this.estimateGas(txTemplate);
+            
+            // Create transaction with only legacy gas parameters
+            const directSwapTransaction = {
+                ...txTemplate,
+                gas: gasLimit,
+                gasPrice: gasPrice
             };
             
             // Sign and send transaction
