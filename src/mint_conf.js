@@ -1,6 +1,6 @@
 const { Web3 } = require('web3');
 const chalk = require('chalk');
-const ora = require('ora');
+// Removed the ora import
 const crypto = require('crypto');
 const { faker } = require('@faker-js/faker');
 
@@ -217,14 +217,12 @@ class MintConfigurator {
             };
             
             // Sign and send transaction
-            const spinner = ora({
-                text: chalk.cyan(`${getTimestamp(this.walletNum)} Signing transaction...`),
-                spinner: 'dots'
-            }).start();
+            // Removed spinner, replaced with console.log
+            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} Signing transaction...`));
             
             const signedTx = await this.web3.eth.accounts.signTransaction(tx, this.account.privateKey);
             
-            spinner.text = chalk.cyan(`${getTimestamp(this.walletNum)} Transaction created, sending...`);
+            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} Transaction created, sending...`));
             
             // Increment nonce before sending
             this.incrementNonce();
@@ -232,7 +230,7 @@ class MintConfigurator {
             // Send the transaction
             const receipt = await this.web3.eth.sendSignedTransaction(signedTx.rawTransaction);
             
-            spinner.succeed(chalk.green(`${getTimestamp(this.walletNum)} ✓ NFT minted successfully: ${receipt.transactionHash}`));
+            console.log(chalk.green(`${getTimestamp(this.walletNum)} ✓ NFT minted successfully: ${receipt.transactionHash}`));
             
             return {
                 success: true,
@@ -300,14 +298,12 @@ class MintConfigurator {
             };
             
             // Sign and send transaction
-            const spinner = ora({
-                text: chalk.cyan(`${getTimestamp(this.walletNum)} Signing transaction...`),
-                spinner: 'dots'
-            }).start();
+            // Removed spinner, replaced with console.log
+            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} Signing transaction...`));
             
             const signedTx = await this.web3.eth.accounts.signTransaction(tx, this.account.privateKey);
             
-            spinner.text = chalk.cyan(`${getTimestamp(this.walletNum)} Transaction created, sending...`);
+            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} Transaction created, sending...`));
             
             // Increment nonce before sending
             this.incrementNonce();
@@ -315,7 +311,7 @@ class MintConfigurator {
             // Send the transaction
             const receipt = await this.web3.eth.sendSignedTransaction(signedTx.rawTransaction);
             
-            spinner.succeed(chalk.green(`${getTimestamp(this.walletNum)} ✓ Domain "${domainName}" minted successfully: ${receipt.transactionHash}`));
+            console.log(chalk.green(`${getTimestamp(this.walletNum)} ✓ Domain "${domainName}" minted successfully: ${receipt.transactionHash}`));
             
             return {
                 success: true,
