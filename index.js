@@ -77,7 +77,7 @@ function generateRandomFile() {
 class StorageUploader {
     constructor(account, network = 'turbo') {
         this.network = network;
-        this.rpcUrl = "https://evmrpc-testnet.0g.ai";
+        this.rpcUrl = "https://rpc.ankr.com/0g_newton/fc1a5afc4892067e4d07e2dda97f9ee4287c9de24c4fb78f2b74fa3c39c363da";
         this.account = account;
         
         this.contractAddresses = {
@@ -239,7 +239,7 @@ class EnhancedFaucetClaimer {
         this.scrappeyApiKey = scrappeyApiKey;
         this.scrappeyUrl = 'https://publisher.scrappey.com/api/v1';
         this.faucetUrl = 'https://992dkn4ph6.execute-api.us-west-1.amazonaws.com/';
-        this.web3 = new Web3('https://evmrpc-testnet.0g.ai');
+        this.web3 = new Web3('https://rpc.ankr.com/0g_newton/fc1a5afc4892067e4d07e2dda97f9ee4287c9de24c4fb78f2b74fa3c39c363da');
         // Set default config first
         this.config = DEFAULT_CONFIG;
         this.maxRetries = DEFAULT_CONFIG.max_retries;
@@ -790,7 +790,7 @@ async function main() {
 
             console.log(chalk.green(`${getTimestamp()} ✓ Found ${privateKeys.length} private keys`));
 
-            const scrappeyApiKey = "Agn4eW0hcVLk1lTCdSsxelL1vijVlEO5mr5Wfr08KkJmwPPKJuOzVxULmCm6";
+            const scrappeyApiKey = "";
             console.log(chalk.blue.bold(`${getTimestamp()} Initializing automation...`));
 
             // Create and initialize the claimer with loaded config
