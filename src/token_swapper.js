@@ -69,7 +69,7 @@ class TokenSwapper {
         }
         
         // RPC connection
-        this.rpcUrl = "https://16600.rpc.thirdweb.com/";
+        this.rpcUrl = "https://16600.rpc.thirdweb.com";
         this.web3 = new Web3(this.rpcUrl);
         
         // Chain ID
@@ -81,6 +81,10 @@ class TokenSwapper {
         }
         this.account = this.web3.eth.accounts.privateKeyToAccount(privateKey);
         this.walletNum = null;
+        
+        // Add nonce tracking to avoid transaction issues
+        this.currentNonce = null;
+        this.pendingTransactions = 0;
         
         // Token contract addresses
         this.tokenContracts = {
@@ -163,8 +167,26 @@ class TokenSwapper {
         }
     }
     
+    // Get the next nonce, considering pending transactions
     async getNonce() {
-        return await this.web3.eth.getTransactionCount(this.account.address);
+        if (this.currentNonce === null) {
+            // If this is the first transaction, get the nonce from the network
+            this.currentNonce = await this.web3.eth.getTransactionCount(this.account.address);
+            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Initial nonce from network: ${this.currentNonce}`));
+        } else {
+            // For subsequent transactions, use the tracked nonce
+            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Using tracked nonce: ${this.currentNonce}`));
+        }
+        
+        return this.currentNonce;
+    }
+    
+    // Update nonce after a transaction is sent
+    incrementNonce() {
+        if (this.currentNonce !== null) {
+            this.currentNonce++;
+            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Incremented nonce to: ${this.currentNonce}`));
+        }
     }
     
     // Method to get optimized gas estimation from the blockchain
@@ -248,7 +270,7 @@ class TokenSwapper {
         return this.convertToWei(randomAmount, tokenSymbol);
     }
     
-    // Claim token from a faucet
+    // Claim token from a faucet with improved transaction handling
     async claimFaucet(tokenSymbol) {
         if (!this.tokenContracts[tokenSymbol]) {
             console.log(chalk.red(`${getTimestamp(this.walletNum)} ✗ Unknown token: ${tokenSymbol}`));
@@ -282,14 +304,73 @@ class TokenSwapper {
                 gasPrice: gasPrice
             };
             
-            // Sign and send transaction
+            // Sign transaction
             const signedTx = await this.web3.eth.accounts.signTransaction(tx, this.account.privateKey);
-            const receipt = await this.web3.eth.sendSignedTransaction(signedTx.rawTransaction);
             
-            console.log(chalk.green(`${getTimestamp(this.walletNum)} ✓ Successfully claimed ${tokenSymbol}: ${receipt.transactionHash}`));
+            // Display transaction hash immediately after signing
+            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Transaction created: ${signedTx.transactionHash}`));
             
-            // Add slight delay to ensure transaction is processed
-            await new Promise(resolve => setTimeout(resolve, 3000));
+            // Increment the nonce before sending the transaction
+            this.incrementNonce();
+            this.pendingTransactions++;
+            
+            // Create a spinner for better UX during confirmation waiting
+            const spinner = ora({
+                text: chalk.cyan(`${getTimestamp(this.walletNum)} Waiting for confirmation... (TX: ${signedTx.transactionHash.substring(0, 16)}...)`),
+                spinner: 'dots'
+            }).start();
+            
+            // Send transaction with proper timeout handling
+            let receipt;
+            try {
+                // Create a promise that will be rejected after timeout
+                const timeout = 60000; // 60 seconds timeout
+                
+                // Set up a promiEvent for the transaction
+                const txPromise = this.web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+                
+                // Add event handlers to show progress
+                txPromise.on('transactionHash', (hash) => {
+                    spinner.text = chalk.cyan(`${getTimestamp(this.walletNum)} Transaction submitted, waiting for confirmation... (TX: ${hash.substring(0, 16)}...)`);
+                });
+                
+                txPromise.on('receipt', (receipt) => {
+                    spinner.text = chalk.cyan(`${getTimestamp(this.walletNum)} Transaction included in block ${receipt.blockNumber}, waiting for confirmations...`);
+                });
+                
+                // Timeout promise
+                const timeoutPromise = new Promise((_, reject) => {
+                    setTimeout(() => {
+                        reject(new Error(`Transaction confirmation timeout after ${timeout/1000} seconds. TX: ${signedTx.transactionHash}`));
+                    }, timeout);
+                });
+                
+                // Race between transaction confirmation and timeout
+                receipt = await Promise.race([
+                    txPromise,
+                    timeoutPromise
+                ]);
+                
+                this.pendingTransactions--;
+                spinner.succeed(chalk.green(`${getTimestamp(this.walletNum)} ✓ Successfully claimed ${tokenSymbol}: ${receipt.transactionHash}`));
+                
+                // Add a delay after successful confirmation to ensure blockchain state is updated
+                await new Promise(resolve => setTimeout(resolve, 5000));
+                
+            } catch (error) {
+                this.pendingTransactions--;
+                spinner.fail(chalk.red(`${getTimestamp(this.walletNum)} ✗ Transaction failed: ${error.message}`));
+                
+                // If it's a timeout error, store the transaction hash for reference
+                if (error.message.includes('timeout')) {
+                    return { 
+                        success: false, 
+                        error: `Transaction timeout. TX Hash: ${signedTx.transactionHash}. It may still complete later.`
+                    };
+                }
+                
+                throw error; // Re-throw for the outer catch block
+            }
             
             return {
                 success: true,
@@ -305,7 +386,7 @@ class TokenSwapper {
         }
     }
     
-    // Approve token for swap
+    // Approve token for swap with improved transaction handling
     async approveToken(tokenSymbol, amount = "1000000000000000000") {
         if (!this.tokenContracts[tokenSymbol]) {
             console.log(chalk.red(`${getTimestamp(this.walletNum)} ✗ Unknown token: ${tokenSymbol}`));
@@ -355,14 +436,73 @@ class TokenSwapper {
                 gasPrice: gasPrice
             };
             
-            // Sign and send transaction
+            // Sign transaction
             const signedTx = await this.web3.eth.accounts.signTransaction(tx, this.account.privateKey);
-            const receipt = await this.web3.eth.sendSignedTransaction(signedTx.rawTransaction);
             
-            console.log(chalk.green(`${getTimestamp(this.walletNum)} ✓ ${tokenSymbol} approval successful: ${receipt.transactionHash}`));
+            // Display transaction hash immediately after signing
+            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Transaction created: ${signedTx.transactionHash}`));
             
-            // Add slightly longer delay to ensure transaction is processed
-            await new Promise(resolve => setTimeout(resolve, 5000));
+            // Increment the nonce before sending the transaction
+            this.incrementNonce();
+            this.pendingTransactions++;
+            
+            // Create a spinner for better UX during confirmation waiting
+            const spinner = ora({
+                text: chalk.cyan(`${getTimestamp(this.walletNum)} Waiting for confirmation... (TX: ${signedTx.transactionHash.substring(0, 16)}...)`),
+                spinner: 'dots'
+            }).start();
+            
+            // Send transaction with proper timeout handling
+            let receipt;
+            try {
+                // Create a promise that will be rejected after timeout
+                const timeout = 60000; // 60 seconds timeout
+                
+                // Set up a promiEvent for the transaction
+                const txPromise = this.web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+                
+                // Add event handlers to show progress
+                txPromise.on('transactionHash', (hash) => {
+                    spinner.text = chalk.cyan(`${getTimestamp(this.walletNum)} Transaction submitted, waiting for confirmation... (TX: ${hash.substring(0, 16)}...)`);
+                });
+                
+                txPromise.on('receipt', (receipt) => {
+                    spinner.text = chalk.cyan(`${getTimestamp(this.walletNum)} Transaction included in block ${receipt.blockNumber}, waiting for confirmations...`);
+                });
+                
+                // Timeout promise
+                const timeoutPromise = new Promise((_, reject) => {
+                    setTimeout(() => {
+                        reject(new Error(`Transaction confirmation timeout after ${timeout/1000} seconds. TX: ${signedTx.transactionHash}`));
+                    }, timeout);
+                });
+                
+                // Race between transaction confirmation and timeout
+                receipt = await Promise.race([
+                    txPromise,
+                    timeoutPromise
+                ]);
+                
+                this.pendingTransactions--;
+                spinner.succeed(chalk.green(`${getTimestamp(this.walletNum)} ✓ ${tokenSymbol} approval successful: ${receipt.transactionHash}`));
+                
+                // Add a delay after successful confirmation to ensure blockchain state is updated
+                await new Promise(resolve => setTimeout(resolve, 5000));
+                
+            } catch (error) {
+                this.pendingTransactions--;
+                spinner.fail(chalk.red(`${getTimestamp(this.walletNum)} ✗ Transaction failed: ${error.message}`));
+                
+                // If it's a timeout error, store the transaction hash for reference
+                if (error.message.includes('timeout')) {
+                    return { 
+                        success: false, 
+                        error: `Transaction timeout. TX Hash: ${signedTx.transactionHash}. It may still complete later.`
+                    };
+                }
+                
+                throw error; // Re-throw for the outer catch block
+            }
             
             return {
                 success: true,
@@ -378,7 +518,28 @@ class TokenSwapper {
         }
     }
     
-    // Execute token swap using direct method (working approach)
+    // sendRawTransaction helper that bypasses Web3's confirmation logic
+    async sendRawTransaction(signedTx) {
+        return new Promise((resolve, reject) => {
+            // Make a direct JSON-RPC call to avoid Web3's confirmation logic
+            this.web3.currentProvider.send({
+                jsonrpc: '2.0',
+                method: 'eth_sendRawTransaction',
+                params: [signedTx.rawTransaction],
+                id: new Date().getTime()
+            }, (error, response) => {
+                if (error) {
+                    reject(error);
+                } else if (response.error) {
+                    reject(new Error(response.error.message));
+                } else {
+                    resolve(response.result); // Return txHash
+                }
+            });
+        });
+    }
+
+    // Modified swapTokens method using direct JSON-RPC calls
     async swapTokens(fromToken, toToken, amount = null) {
         if (!this.tokenContracts[fromToken] || !this.tokenContracts[toToken]) {
             console.log(chalk.red(`${getTimestamp(this.walletNum)} ✗ Invalid token pair: ${fromToken}-${toToken}`));
@@ -459,16 +620,99 @@ class TokenSwapper {
                 gasPrice: gasPrice
             };
             
-            // Sign and send transaction
+            // Sign transaction
             const signedTx = await this.web3.eth.accounts.signTransaction(directSwapTransaction, this.account.privateKey);
-            const receipt = await this.web3.eth.sendSignedTransaction(signedTx.rawTransaction);
             
-            console.log(chalk.green(`${getTimestamp(this.walletNum)} ✓ Direct swap from ${fromToken} to ${toToken} successful: ${receipt.transactionHash}`));
+            // Display transaction hash immediately after signing
+            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Transaction created: ${signedTx.transactionHash}`));
             
-            return {
-                success: true,
-                txHash: receipt.transactionHash
-            };
+            // Increment the nonce before sending the transaction
+            this.incrementNonce();
+            this.pendingTransactions++;
+            
+            // Create a spinner for better UX during confirmation waiting
+            const spinner = ora({
+                text: chalk.cyan(`${getTimestamp(this.walletNum)} Sending transaction...`),
+                spinner: 'dots'
+            }).start();
+            
+            try {
+                // Send raw transaction using direct JSON-RPC call (avoids Web3's confirmation system)
+                const txHash = await this.sendRawTransaction(signedTx);
+                
+                spinner.text = chalk.cyan(`${getTimestamp(this.walletNum)} Transaction submitted with hash: ${txHash}`);
+                
+                // Wait a moment for the transaction to propagate
+                await new Promise(resolve => setTimeout(resolve, 3000));
+                
+                // Now manually check for transaction confirmation with custom timeout
+                let confirmed = false;
+                let receipt = null;
+                const maxAttempts = 50; // 50 attempts with 3-second interval = ~90 seconds max wait
+                let attempts = 0;
+                
+                while (!confirmed && attempts < maxAttempts) {
+                    attempts++;
+                    try {
+                        // Try to get the transaction receipt
+                        receipt = await this.web3.eth.getTransactionReceipt(txHash);
+                        
+                        if (receipt && receipt.blockNumber) {
+                            // Transaction is confirmed
+                            confirmed = true;
+                            spinner.text = chalk.cyan(`${getTimestamp(this.walletNum)} Transaction confirmed in block ${receipt.blockNumber}`);
+                        } else {
+                            // Transaction is still pending
+                            spinner.text = chalk.cyan(`${getTimestamp(this.walletNum)} Waiting for confirmation... (attempt ${attempts}/${maxAttempts})`);
+                            // Wait before the next check
+                            await new Promise(resolve => setTimeout(resolve, 3000));
+                        }
+                    } catch (error) {
+                        // Error checking receipt, but transaction might still be confirming
+                        spinner.text = chalk.cyan(`${getTimestamp(this.walletNum)} Checking status... (attempt ${attempts}/${maxAttempts})`);
+                        await new Promise(resolve => setTimeout(resolve, 3000));
+                    }
+                }
+                
+                this.pendingTransactions--;
+                
+                if (confirmed) {
+                    // Check transaction status (success = 1, failure = 0)
+                    if (receipt.status) {
+                        spinner.succeed(chalk.green(`${getTimestamp(this.walletNum)} ✓ Direct swap from ${fromToken} to ${toToken} successful: ${receipt.transactionHash}`));
+                        
+                        // Add a cooldown after successful confirmation
+                        await new Promise(resolve => setTimeout(resolve, 5000));
+                        
+                        return {
+                            success: true,
+                            txHash: receipt.transactionHash
+                        };
+                    } else {
+                        // Transaction was mined but failed (e.g. due to out of gas or revert)
+                        spinner.fail(chalk.red(`${getTimestamp(this.walletNum)} ✗ Transaction was mined but failed (reverted). TX: ${receipt.transactionHash}`));
+                        return {
+                            success: false,
+                            error: `Transaction reverted. TX: ${receipt.transactionHash}`
+                        };
+                    }
+                } else {
+                    // Transaction didn't confirm within the timeout period
+                    spinner.warn(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Transaction not confirmed within timeout period. It may still complete later. TX: ${txHash}`));
+                    
+                    return {
+                        success: false,
+                        error: `Transaction not confirmed within timeout. TX: ${txHash}. It may still complete later.`
+                    };
+                }
+            } catch (error) {
+                this.pendingTransactions--;
+                spinner.fail(chalk.red(`${getTimestamp(this.walletNum)} ✗ Transaction failed: ${error.message}`));
+                return { 
+                    success: false, 
+                    error: error.message 
+                };
+            }
             
         } catch (error) {
             console.log(chalk.red(`${getTimestamp(this.walletNum)} ✗ Error swapping ${fromToken} to ${toToken}: ${error.message}`));
@@ -515,7 +759,8 @@ class TokenSwapper {
             
             // Add delay between claims
             if (tokens.indexOf(token) < tokens.length - 1) {
-                const delay = Math.random() * 3000 + 2000; // 2-5 second delay
+                const delay = Math.random() * 5000 + 5000; // 5-10 second delay
+                console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Waiting ${Math.round(delay/1000)}s between claims...`));
                 await new Promise(resolve => setTimeout(resolve, delay));
             }
         }
@@ -524,7 +769,7 @@ class TokenSwapper {
         return true;
     }
     
-    // Execute all token swaps
+    // Execute all token swaps with improved delays and transaction handling
     async executeAllSwaps() {
         if (!this.config.enable_token_swap) {
             console.log(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Token swaps disabled in config`));
@@ -574,16 +819,18 @@ class TokenSwapper {
                     console.log(chalk.red(`${getTimestamp(this.walletNum)} ✗ Failed to swap ${from}-${to} after ${this.config.max_retries} attempts`));
                 }
                 
-                // Add delay between swaps
+                // Add longer delay between swaps to allow transactions to be mined
                 if (i < swapCount - 1) {
-                    const delay = Math.random() * 5000 + 3000; // 3-8 second delay
+                    const delay = Math.random() * 8000 + 7000; // 7-15 second delay
+                    console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Waiting ${Math.round(delay/1000)}s for transaction to be mined before next swap...`));
                     await new Promise(resolve => setTimeout(resolve, delay));
                 }
             }
             
-            // Add delay between pairs
+            // Add longer delay between pairs
             if (swapPairs.indexOf(pair) < swapPairs.length - 1) {
-                const delay = Math.random() * 5000 + 5000; // 5-10 second delay
+                const delay = Math.random() * 8000 + 7000; // 7-15 second delay
+                console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Waiting ${Math.round(delay/1000)}s between pairs...`));
                 await new Promise(resolve => setTimeout(resolve, delay));
             }
         }
@@ -597,6 +844,9 @@ class TokenSwapper {
         console.log(chalk.blue.bold(`${getTimestamp(this.walletNum)} Starting token operations...`));
         
         try {
+            // Reset nonce tracking at the start of operations
+            this.currentNonce = null;
+            
             // Step 1: Claim all tokens from faucets
             await this.claimAllFaucets();
             
@@ -608,6 +858,20 @@ class TokenSwapper {
             
         } catch (error) {
             console.log(chalk.red(`${getTimestamp(this.walletNum)} ✗ Error in token operations: ${error.message}`));
+            return false;
+        }
+    }
+    
+    // Reset nonce tracking (can be used to recover from errors)
+    async resetNonce() {
+        try {
+            // Get the current nonce from the network
+            const networkNonce = await this.web3.eth.getTransactionCount(this.account.address);
+            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Reset nonce from ${this.currentNonce} to ${networkNonce} (from network)`));
+            this.currentNonce = networkNonce;
+            return true;
+        } catch (error) {
+            console.log(chalk.red(`${getTimestamp(this.walletNum)} ✗ Error resetting nonce: ${error.message}`));
             return false;
         }
     }
