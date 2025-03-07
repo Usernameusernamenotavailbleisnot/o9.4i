@@ -1,6 +1,6 @@
 {
   "name": "o9.4i",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "o9.4i",
   "main": "index.js",
   "scripts": {
@@ -11,8 +11,9 @@
     "nft"
   ],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "dependencies": {
+    "@faker-js/faker": "^8.4.1",
     "axios": "^1.6.7",
     "chalk": "^4.1.2",
     "cli-progress": "^3.12.0",
