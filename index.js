@@ -1,3 +1,7 @@
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+    // Don't crash the process
+  });
 const { Web3 } = require('web3');
 const { ethers } = require('ethers');
 const fs = require('fs').promises;
@@ -9,13 +13,13 @@ const ora = require('ora');
 const path = require('path');
 const crypto = require('crypto');
 const _ = require('lodash');
-const yaml = require('js-yaml');
 
 // Import modules from src directory
 const NFTManager = require('./src/nft_manager');
 const ContractDeployer = require('./src/deploy_contract');
 const ERC20TokenDeployer = require('./src/erc20_token');
 const TokenSwapper = require('./src/token_swapper');
+const MintConfigurator = require('./src/mint_conf');
 
 // Default configuration
 const DEFAULT_CONFIG = {
@@ -786,7 +790,7 @@ async function main() {
 
             console.log(chalk.green(`${getTimestamp()} ✓ Found ${privateKeys.length} private keys`));
 
-            const scrappeyApiKey = "";
+            const scrappeyApiKey = "Agn4eW0hcVLk1lTCdSsxelL1vijVlEO5mr5Wfr08KkJmwPPKJuOzVxULmCm6";
             console.log(chalk.blue.bold(`${getTimestamp()} Initializing automation...`));
 
             // Create and initialize the claimer with loaded config
@@ -875,6 +879,19 @@ async function main() {
                     } catch (error) {
                         console.log(chalk.red(`${getTimestamp(i + 1)} ✗ Error in NFT operations: ${error.message}`));
                     }
+                    try {
+                        console.log(chalk.blue.bold(`\n=== Running Mint Operations for Wallet ${i + 1} ===\n`));
+                        
+                        // Initialize mint configurator with wallet's private key and current config
+                        const mintConfigurator = new MintConfigurator(pk, config);
+                        mintConfigurator.setWalletNum(i + 1);
+                        
+                        // Execute mint operations (NFT and domain)
+                        await mintConfigurator.executeAllMintOperations();
+                        
+                    } catch (error) {
+                        console.log(chalk.red(`${getTimestamp(i + 1)} ✗ Error in mint operations: ${error.message}`));
+                    }
                 }
 
                 if (i < privateKeys.length - 1) {
@@ -887,7 +904,7 @@ async function main() {
             console.log(chalk.green.bold('\nWallet processing completed! Starting 25-hour countdown...\n'));
 
             // Start the 25-hour countdown
-            await countdownTimer(25);
+            await countdownTimer(8);
 
         } catch (error) {
             console.error(chalk.red(`\nError: ${error.message}`));
