@@ -46,7 +46,21 @@ class TokenSwapper {
                 "ETH": 5
             },
             default_gas: 100000, // Lower default gas as fallback
-            max_retries: 3
+            max_retries: 3,
+            // NEW: Gas price configuration
+            gas_price: {
+                multiplier: 1.2,      // Multiplier for network gas price
+                retry_increase: 1.3,  // Increase by this factor on each retry
+                min_gwei: 0,          // Minimum gas price in gwei
+                max_gwei: 200         // Maximum gas price in gwei
+            },
+            // NEW: Options for mempool handling
+            mempool_options: {
+                retry_delay_base: 5000,        // Base delay in ms (5 seconds)
+                retry_delay_extra: 5000,       // Random extra delay up to this amount
+                mempool_retry_multiplier: 3,   // Multiply delay when mempool is full
+                rpc_rotation_enabled: true     // Enable RPC rotation on errors
+            }
         };
         
         // Load configuration, processing the nested token_operations object if it exists
@@ -68,8 +82,20 @@ class TokenSwapper {
             this.config = { ...this.defaultConfig, ...config };
         }
         
-        // RPC connection
-        this.rpcUrl = "https://16600.rpc.thirdweb.com";
+        // NEW: RPC endpoints with rotation
+        this.rpcUrls = [
+            "https://evm-rpc.0g.testnet.node75.org",
+            "https://evmrpc-testnet.0g.ai",
+            "https://16600.rpc.thirdweb.com",
+            "https://rpc.ankr.com/0g_newton",
+            "https://0g-json-rpc-public.originstake.com",
+            "https://0g-evm-rpc.murphynode.net",
+            "https://og-testnet-evm.itrocket.net"
+        ];
+        this.currentRpcIndex = 0;
+        
+        // RPC connection - start with first in the list
+        this.rpcUrl = this.rpcUrls[this.currentRpcIndex];
         this.web3 = new Web3(this.rpcUrl);
         
         // Chain ID
@@ -85,6 +111,9 @@ class TokenSwapper {
         // Add nonce tracking to avoid transaction issues
         this.currentNonce = null;
         this.pendingTransactions = 0;
+        
+        // NEW: Track failed transactions for potential replacement
+        this.failedTransactions = [];
         
         // Token contract addresses
         this.tokenContracts = {
@@ -145,23 +174,72 @@ class TokenSwapper {
         this.walletNum = num;
     }
     
-    async getGasPrice() {
+    // NEW: Rotate RPC endpoints to handle different node behaviors
+    async rotateRpc() {
+        if (!this.config.mempool_options.rpc_rotation_enabled) {
+            console.log(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ RPC rotation disabled in config`));
+            return false;
+        }
+        
+        // Select next RPC in the list
+        this.currentRpcIndex = (this.currentRpcIndex + 1) % this.rpcUrls.length;
+        this.rpcUrl = this.rpcUrls[this.currentRpcIndex];
+        
+        console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Switching to RPC: ${this.rpcUrl}`));
+        
+        // Create new Web3 instance with the selected RPC
+        this.web3 = new Web3(this.rpcUrl);
+        
+        // Reset nonce after RPC rotation to ensure correct nonce
+        this.currentNonce = null;
+        
+        return true;
+    }
+    
+    // ENHANCED: Improved gas price calculation with config-based multipliers
+    async getGasPrice(retryCount = 0) {
         try {
             // Get the current gas price from the network
-            const gasPrice = await this.web3.eth.getGasPrice();
+            const networkGasPrice = await this.web3.eth.getGasPrice();
             
-            // Use the network's suggested price without multiplier
-            const economicalGasPrice = BigInt(gasPrice);
+            // Apply base multiplier from config
+            let multiplier = this.config.gas_price.multiplier || 1.5;
             
-            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Using network gas price: ${this.web3.utils.fromWei(gasPrice, 'gwei')} gwei`));
+            // Apply additional multiplier for retries
+            if (retryCount > 0) {
+                const retryMultiplier = Math.pow(this.config.gas_price.retry_increase || 1.3, retryCount);
+                multiplier *= retryMultiplier;
+                console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Applying retry multiplier: ${retryMultiplier.toFixed(2)}x (total: ${multiplier.toFixed(2)}x)`));
+            }
             
-            return economicalGasPrice.toString();
+            // Calculate gas price with multiplier
+            const adjustedGasPrice = BigInt(Math.floor(Number(networkGasPrice) * multiplier));
+            
+            // Convert to gwei for display
+            const gweiPrice = this.web3.utils.fromWei(adjustedGasPrice.toString(), 'gwei');
+            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Network gas price: ${this.web3.utils.fromWei(networkGasPrice, 'gwei')} gwei, using: ${gweiPrice} gwei (${multiplier.toFixed(2)}x)`));
+            
+            // Enforce min/max gas price in gwei
+            const minGasPrice = BigInt(this.web3.utils.toWei(this.config.gas_price.min_gwei.toString() || '1', 'gwei'));
+            const maxGasPrice = BigInt(this.web3.utils.toWei(this.config.gas_price.max_gwei.toString() || '50', 'gwei'));
+            
+            // Ensure gas price is within bounds
+            let finalGasPrice = adjustedGasPrice;
+            if (adjustedGasPrice < minGasPrice) {
+                finalGasPrice = minGasPrice;
+                console.log(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Gas price below minimum, using: ${this.config.gas_price.min_gwei} gwei`));
+            } else if (adjustedGasPrice > maxGasPrice) {
+                finalGasPrice = maxGasPrice;
+                console.log(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Gas price above maximum, using: ${this.config.gas_price.max_gwei} gwei`));
+            }
+            
+            return finalGasPrice.toString();
         } catch (error) {
             console.log(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Error getting gas price: ${error.message}`));
             
             // Fallback to a low gas price
-            const fallbackGasPrice = this.web3.utils.toWei('1', 'gwei');
-            console.log(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Using fallback gas price: 1 gwei`));
+            const fallbackGasPrice = this.web3.utils.toWei(this.config.gas_price.min_gwei.toString() || '1', 'gwei');
+            console.log(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Using fallback gas price: ${this.config.gas_price.min_gwei} gwei`));
             
             return fallbackGasPrice;
         }
@@ -171,8 +249,20 @@ class TokenSwapper {
     async getNonce() {
         if (this.currentNonce === null) {
             // If this is the first transaction, get the nonce from the network
-            this.currentNonce = await this.web3.eth.getTransactionCount(this.account.address);
-            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Initial nonce from network: ${this.currentNonce}`));
+            try {
+                this.currentNonce = await this.web3.eth.getTransactionCount(this.account.address);
+                console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Initial nonce from network: ${this.currentNonce}`));
+            } catch (error) {
+                console.log(chalk.red(`${getTimestamp(this.walletNum)} ✗ Error getting nonce: ${error.message}`));
+                
+                // Rotate RPC and try again
+                if (await this.rotateRpc()) {
+                    console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Retrying nonce fetch with new RPC...`));
+                    this.currentNonce = await this.web3.eth.getTransactionCount(this.account.address);
+                } else {
+                    throw error; // Rethrow if we can't rotate
+                }
+            }
         } else {
             // For subsequent transactions, use the tracked nonce
             console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Using tracked nonce: ${this.currentNonce}`));
@@ -189,8 +279,72 @@ class TokenSwapper {
         }
     }
     
-    // Method to get optimized gas estimation from the blockchain
-    async estimateGas(txObject) {
+    // NEW: Check mempool status (if supported by RPC)
+    async checkMempoolStatus() {
+        try {
+            // Some RPC nodes provide mempool info via non-standard methods
+            const response = await new Promise((resolve, reject) => {
+                this.web3.currentProvider.send({
+                    jsonrpc: '2.0',
+                    method: 'txpool_status',
+                    params: [],
+                    id: new Date().getTime()
+                }, (error, response) => {
+                    if (error) reject(error);
+                    else resolve(response);
+                });
+            });
+            
+            if (response && response.result) {
+                const pending = parseInt(response.result.pending, 16);
+                const queued = parseInt(response.result.queued, 16);
+                console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Mempool status: ${pending} pending, ${queued} queued`));
+                return { pending, queued, full: false };
+            }
+        } catch (error) {
+            // Most nodes don't support this method, so we just log and move on
+            console.log(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Cannot check mempool status: ${error.message}`));
+        }
+        
+        return { pending: 0, queued: 0, full: false };
+    }
+    
+    // ENHANCED: Method to calculate the retry delay based on error and attempt count
+    getRetryDelay(error, attemptCount) {
+        const options = this.config.mempool_options;
+        const baseDelay = options.retry_delay_base || 5000;
+        const extraDelay = Math.random() * (options.retry_delay_extra || 5000);
+        
+        // Calculate exponential backoff based on attempt count
+        const expBackoffFactor = Math.pow(2, attemptCount - 1);
+        
+        // Apply mempool multiplier if the error indicates mempool issues
+        const isMempoolError = error && (
+            error.includes("mempool is full") || 
+            error.includes("already known") || 
+            error.includes("nonce too low") ||
+            error.includes("transaction underpriced") ||
+            error.includes("replacement transaction underpriced")
+        );
+        
+        const mempoolMultiplier = isMempoolError ? (options.mempool_retry_multiplier || 3) : 1;
+        
+        // Calculate final delay
+        const delay = baseDelay * expBackoffFactor * mempoolMultiplier + extraDelay;
+        
+        // Log the calculated delay with reason
+        let reason = `attempt ${attemptCount}`;
+        if (isMempoolError) {
+            reason += `, mempool issue (${mempoolMultiplier}x multiplier)`;
+        }
+        
+        console.log(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Retry delay: ${Math.round(delay/1000)}s (${reason})`));
+        
+        return Math.floor(delay);
+    }
+    
+    // ENHANCED: Improved gas estimation with RPC rotation
+    async estimateGas(txObject, retryCount = 0) {
         try {
             console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Optimizing gas estimation...`));
             
@@ -205,15 +359,34 @@ class TokenSwapper {
             };
             
             // Get the gas estimate from the blockchain
-            const estimatedGas = await this.web3.eth.estimateGas(estimationTx);
+            let estimatedGas;
+            try {
+                estimatedGas = await this.web3.eth.estimateGas(estimationTx);
+            } catch (gasError) {
+                // If gas estimation fails, try with a higher value or rotate RPC
+                console.log(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Gas estimation failed: ${gasError.message}`));
+                
+                if (retryCount < 2 && this.config.mempool_options.rpc_rotation_enabled) {
+                    // Try with a different RPC
+                    await this.rotateRpc();
+                    console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Retrying gas estimation with new RPC...`));
+                    return this.estimateGas(txObject, retryCount + 1);
+                } else {
+                    // Fall back to default value
+                    return this.config.default_gas;
+                }
+            }
             
-            // For maximum efficiency, we use the exact gas estimation
-            // This is what wallet apps do to minimize costs
-            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Using optimized gas limit: ${estimatedGas}`));
+            // Apply a buffer to the estimated gas (10% extra) to ensure the transaction succeeds
+            // This is common practice to avoid "out of gas" errors
+            const gasBuffer = 1.1;
+            const bufferedGas = Math.ceil(Number(estimatedGas) * gasBuffer);
             
-            return estimatedGas;
+            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Estimated gas: ${estimatedGas}, with buffer: ${bufferedGas}`));
+            
+            return bufferedGas;
         } catch (error) {
-            console.log(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Gas estimation failed: ${error.message}`));
+            console.log(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Gas estimation process failed: ${error.message}`));
             console.log(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Using default gas: ${this.config.default_gas}`));
             return this.config.default_gas;
         }
@@ -270,6 +443,162 @@ class TokenSwapper {
         return this.convertToWei(randomAmount, tokenSymbol);
     }
     
+    // ENHANCED: Improved transaction sending with mempool handling
+    async sendTransaction(txObject, description, retryCount = 0) {
+        try {
+            // Sign transaction
+            const signedTx = await this.web3.eth.accounts.signTransaction(txObject, this.account.privateKey);
+            
+            // Display transaction hash immediately after signing
+            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Transaction created: ${signedTx.transactionHash}`));
+            
+            // Increment the nonce before sending the transaction
+            this.incrementNonce();
+            this.pendingTransactions++;
+            
+            // Create a spinner for better UX during confirmation waiting
+            const spinner = ora({
+                text: chalk.cyan(`${getTimestamp(this.walletNum)} Waiting for confirmation... (TX: ${signedTx.transactionHash.substring(0, 16)}...)`),
+                spinner: 'dots'
+            }).start();
+            
+            // Send transaction with proper timeout handling
+            try {
+                // Create a promise that will be rejected after timeout
+                const timeout = 60000; // 60 seconds timeout
+                
+                // Use direct JSON-RPC call for sending transaction to avoid Web3's confirmation logic
+                const txHash = await this.sendRawTransaction(signedTx);
+                
+                spinner.text = chalk.cyan(`${getTimestamp(this.walletNum)} Transaction submitted, waiting for confirmation... (TX: ${txHash.substring(0, 16)}...)`);
+                
+                // Wait a moment for the transaction to propagate
+                await new Promise(resolve => setTimeout(resolve, 3000));
+                
+                // Now manually check for transaction confirmation with custom timeout
+                let confirmed = false;
+                let receipt = null;
+                const maxAttempts = 20; // 20 attempts with 3-second interval = ~60 seconds max wait
+                let attempts = 0;
+                
+                while (!confirmed && attempts < maxAttempts) {
+                    attempts++;
+                    try {
+                        // Try to get the transaction receipt
+                        receipt = await this.web3.eth.getTransactionReceipt(txHash);
+                        
+                        if (receipt && receipt.blockNumber) {
+                            // Transaction is confirmed
+                            confirmed = true;
+                            spinner.text = chalk.cyan(`${getTimestamp(this.walletNum)} Transaction confirmed in block ${receipt.blockNumber}`);
+                        } else {
+                            // Transaction is still pending
+                            spinner.text = chalk.cyan(`${getTimestamp(this.walletNum)} Waiting for confirmation... (attempt ${attempts}/${maxAttempts})`);
+                            // Wait before the next check
+                            await new Promise(resolve => setTimeout(resolve, 3000));
+                        }
+                    } catch (error) {
+                        // Error checking receipt, but transaction might still be confirming
+                        spinner.text = chalk.cyan(`${getTimestamp(this.walletNum)} Checking status... (attempt ${attempts}/${maxAttempts})`);
+                        await new Promise(resolve => setTimeout(resolve, 3000));
+                    }
+                }
+                
+                this.pendingTransactions--;
+                
+                if (confirmed) {
+                    // Check transaction status (success = 1, failure = 0)
+                    if (receipt.status) {
+                        spinner.succeed(chalk.green(`${getTimestamp(this.walletNum)} ✓ ${description} successful: ${receipt.transactionHash}`));
+                        
+                        // Add a cooldown after successful confirmation
+                        await new Promise(resolve => setTimeout(resolve, 5000));
+                        
+                        return {
+                            success: true,
+                            txHash: receipt.transactionHash
+                        };
+                    } else {
+                        // Transaction was mined but failed (e.g. due to out of gas or revert)
+                        spinner.fail(chalk.red(`${getTimestamp(this.walletNum)} ✗ Transaction was mined but failed (reverted). TX: ${receipt.transactionHash}`));
+                        return {
+                            success: false,
+                            error: `Transaction reverted. TX: ${receipt.transactionHash}`
+                        };
+                    }
+                } else {
+                    // Transaction didn't confirm within the timeout period
+                    spinner.warn(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Transaction not confirmed within timeout period. It may still complete later. TX: ${txHash}`));
+                    
+                    // Add to failed transactions list for potential replacement
+                    this.failedTransactions.push({
+                        hash: txHash,
+                        nonce: txObject.nonce,
+                        gasPrice: txObject.gasPrice
+                    });
+                    
+                    return {
+                        success: false,
+                        error: `Transaction not confirmed within timeout. TX: ${txHash}. It may still complete later.`
+                    };
+                }
+            } catch (error) {
+                this.pendingTransactions--;
+                spinner.fail(chalk.red(`${getTimestamp(this.walletNum)} ✗ Transaction failed: ${error.message}`));
+                
+                // Check for specific mempool errors
+                if (error.message.includes("mempool is full")) {
+                    console.log(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Mempool is full, will retry with higher gas price`));
+                    
+                    // If not too many retries yet, attempt to resend with higher gas
+                    if (retryCount < this.config.max_retries) {
+                        // Calculate delay for retry
+                        const delay = this.getRetryDelay(error.message, retryCount + 1);
+                        
+                        // Wait before retrying
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        
+                        // Try with a different RPC endpoint
+                        if (this.config.mempool_options.rpc_rotation_enabled) {
+                            await this.rotateRpc();
+                        }
+                        
+                        // Get a new nonce in case our transaction was actually accepted
+                        this.currentNonce = null;
+                        const newNonce = await this.getNonce();
+                        
+                        // Calculate a higher gas price for retry
+                        const newGasPrice = await this.getGasPrice(retryCount + 1);
+                        
+                        // Update transaction
+                        const newTxObject = {
+                            ...txObject,
+                            nonce: newNonce,
+                            gasPrice: newGasPrice
+                        };
+                        
+                        // Retry with new parameters
+                        console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Retrying transaction with higher gas price...`));
+                        return this.sendTransaction(newTxObject, description, retryCount + 1);
+                    }
+                }
+                
+                // Return error for other cases
+                return { 
+                    success: false, 
+                    error: error.message 
+                };
+            }
+            
+        } catch (error) {
+            console.log(chalk.red(`${getTimestamp(this.walletNum)} ✗ Error in transaction process: ${error.message}`));
+            return { 
+                success: false, 
+                error: error.message 
+            };
+        }
+    }
+    
     // Claim token from a faucet with improved transaction handling
     async claimFaucet(tokenSymbol) {
         if (!this.tokenContracts[tokenSymbol]) {
@@ -304,78 +633,8 @@ class TokenSwapper {
                 gasPrice: gasPrice
             };
             
-            // Sign transaction
-            const signedTx = await this.web3.eth.accounts.signTransaction(tx, this.account.privateKey);
-            
-            // Display transaction hash immediately after signing
-            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Transaction created: ${signedTx.transactionHash}`));
-            
-            // Increment the nonce before sending the transaction
-            this.incrementNonce();
-            this.pendingTransactions++;
-            
-            // Create a spinner for better UX during confirmation waiting
-            const spinner = ora({
-                text: chalk.cyan(`${getTimestamp(this.walletNum)} Waiting for confirmation... (TX: ${signedTx.transactionHash.substring(0, 16)}...)`),
-                spinner: 'dots'
-            }).start();
-            
-            // Send transaction with proper timeout handling
-            let receipt;
-            try {
-                // Create a promise that will be rejected after timeout
-                const timeout = 60000; // 60 seconds timeout
-                
-                // Set up a promiEvent for the transaction
-                const txPromise = this.web3.eth.sendSignedTransaction(signedTx.rawTransaction);
-                
-                // Add event handlers to show progress
-                txPromise.on('transactionHash', (hash) => {
-                    spinner.text = chalk.cyan(`${getTimestamp(this.walletNum)} Transaction submitted, waiting for confirmation... (TX: ${hash.substring(0, 16)}...)`);
-                });
-                
-                txPromise.on('receipt', (receipt) => {
-                    spinner.text = chalk.cyan(`${getTimestamp(this.walletNum)} Transaction included in block ${receipt.blockNumber}, waiting for confirmations...`);
-                });
-                
-                // Timeout promise
-                const timeoutPromise = new Promise((_, reject) => {
-                    setTimeout(() => {
-                        reject(new Error(`Transaction confirmation timeout after ${timeout/1000} seconds. TX: ${signedTx.transactionHash}`));
-                    }, timeout);
-                });
-                
-                // Race between transaction confirmation and timeout
-                receipt = await Promise.race([
-                    txPromise,
-                    timeoutPromise
-                ]);
-                
-                this.pendingTransactions--;
-                spinner.succeed(chalk.green(`${getTimestamp(this.walletNum)} ✓ Successfully claimed ${tokenSymbol}: ${receipt.transactionHash}`));
-                
-                // Add a delay after successful confirmation to ensure blockchain state is updated
-                await new Promise(resolve => setTimeout(resolve, 5000));
-                
-            } catch (error) {
-                this.pendingTransactions--;
-                spinner.fail(chalk.red(`${getTimestamp(this.walletNum)} ✗ Transaction failed: ${error.message}`));
-                
-                // If it's a timeout error, store the transaction hash for reference
-                if (error.message.includes('timeout')) {
-                    return { 
-                        success: false, 
-                        error: `Transaction timeout. TX Hash: ${signedTx.transactionHash}. It may still complete later.`
-                    };
-                }
-                
-                throw error; // Re-throw for the outer catch block
-            }
-            
-            return {
-                success: true,
-                txHash: receipt.transactionHash
-            };
+            // Use the enhanced sendTransaction method
+            return await this.sendTransaction(tx, `${tokenSymbol} faucet claim`);
             
         } catch (error) {
             console.log(chalk.red(`${getTimestamp(this.walletNum)} ✗ Error claiming ${tokenSymbol}: ${error.message}`));
@@ -436,78 +695,8 @@ class TokenSwapper {
                 gasPrice: gasPrice
             };
             
-            // Sign transaction
-            const signedTx = await this.web3.eth.accounts.signTransaction(tx, this.account.privateKey);
-            
-            // Display transaction hash immediately after signing
-            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Transaction created: ${signedTx.transactionHash}`));
-            
-            // Increment the nonce before sending the transaction
-            this.incrementNonce();
-            this.pendingTransactions++;
-            
-            // Create a spinner for better UX during confirmation waiting
-            const spinner = ora({
-                text: chalk.cyan(`${getTimestamp(this.walletNum)} Waiting for confirmation... (TX: ${signedTx.transactionHash.substring(0, 16)}...)`),
-                spinner: 'dots'
-            }).start();
-            
-            // Send transaction with proper timeout handling
-            let receipt;
-            try {
-                // Create a promise that will be rejected after timeout
-                const timeout = 60000; // 60 seconds timeout
-                
-                // Set up a promiEvent for the transaction
-                const txPromise = this.web3.eth.sendSignedTransaction(signedTx.rawTransaction);
-                
-                // Add event handlers to show progress
-                txPromise.on('transactionHash', (hash) => {
-                    spinner.text = chalk.cyan(`${getTimestamp(this.walletNum)} Transaction submitted, waiting for confirmation... (TX: ${hash.substring(0, 16)}...)`);
-                });
-                
-                txPromise.on('receipt', (receipt) => {
-                    spinner.text = chalk.cyan(`${getTimestamp(this.walletNum)} Transaction included in block ${receipt.blockNumber}, waiting for confirmations...`);
-                });
-                
-                // Timeout promise
-                const timeoutPromise = new Promise((_, reject) => {
-                    setTimeout(() => {
-                        reject(new Error(`Transaction confirmation timeout after ${timeout/1000} seconds. TX: ${signedTx.transactionHash}`));
-                    }, timeout);
-                });
-                
-                // Race between transaction confirmation and timeout
-                receipt = await Promise.race([
-                    txPromise,
-                    timeoutPromise
-                ]);
-                
-                this.pendingTransactions--;
-                spinner.succeed(chalk.green(`${getTimestamp(this.walletNum)} ✓ ${tokenSymbol} approval successful: ${receipt.transactionHash}`));
-                
-                // Add a delay after successful confirmation to ensure blockchain state is updated
-                await new Promise(resolve => setTimeout(resolve, 5000));
-                
-            } catch (error) {
-                this.pendingTransactions--;
-                spinner.fail(chalk.red(`${getTimestamp(this.walletNum)} ✗ Transaction failed: ${error.message}`));
-                
-                // If it's a timeout error, store the transaction hash for reference
-                if (error.message.includes('timeout')) {
-                    return { 
-                        success: false, 
-                        error: `Transaction timeout. TX Hash: ${signedTx.transactionHash}. It may still complete later.`
-                    };
-                }
-                
-                throw error; // Re-throw for the outer catch block
-            }
-            
-            return {
-                success: true,
-                txHash: receipt.transactionHash
-            };
+            // Use the enhanced sendTransaction method
+            return await this.sendTransaction(tx, `${tokenSymbol} approval`);
             
         } catch (error) {
             console.log(chalk.red(`${getTimestamp(this.walletNum)} ✗ Error approving ${tokenSymbol}: ${error.message}`));
@@ -539,8 +728,8 @@ class TokenSwapper {
         });
     }
 
-    // Modified swapTokens method using direct JSON-RPC calls
-    async swapTokens(fromToken, toToken, amount = null) {
+    // ENHANCED: Modified swapTokens method with improved mempool handling
+    async swapTokens(fromToken, toToken, amount = null, retryCount = 0) {
         if (!this.tokenContracts[fromToken] || !this.tokenContracts[toToken]) {
             console.log(chalk.red(`${getTimestamp(this.walletNum)} ✗ Invalid token pair: ${fromToken}-${toToken}`));
             return { success: false, error: "Invalid token pair" };
@@ -580,26 +769,28 @@ class TokenSwapper {
                 return approvalResult;
             }
             
-            // Direct swap implementation based on working approach
-            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Attempting direct swap...`));
+            // Check mempool status before proceeding
+            await this.checkMempoolStatus();
             
-            // Get nonce and gas price
+            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Preparing swap transaction...`));
+            
+            // Get nonce and gas price with retry factor if this is a retry
             const nonce = await this.getNonce();
-            const gasPrice = await this.getGasPrice();
+            const gasPrice = await this.getGasPrice(retryCount);
             
             // Get current timestamp + 3600 seconds for deadline
             const deadline = Math.floor(Date.now() / 1000) + 3600;
             
-            // Prepare transaction data
+            // Prepare transaction data - using direct swap call format
             const swapData = "0x414bf389" + 
                 this.tokenContracts[fromToken].slice(2).padStart(64, "0") +
                 this.tokenContracts[toToken].slice(2).padStart(64, "0") +
-                "0000000000000000000000000000000000000000000000000000000000000bb8" +
+                "0000000000000000000000000000000000000000000000000000000000000bb8" + // Slippage 0.3%
                 this.account.address.slice(2).padStart(64, "0") +
                 deadline.toString(16).padStart(64, "0") +
                 BigInt(amount).toString(16).padStart(64, "0") +
-                "0000000000000000000000000000000000000000000000000000000000000001" +
-                "0000000000000000000000000000000000000000000000000000000000000000";
+                "0000000000000000000000000000000000000000000000000000000000000001" + // Min output amount (1 wei)
+                "0000000000000000000000000000000000000000000000000000000000000000"; // No route
             
             // Transaction template for gas estimation
             const txTemplate = {
@@ -613,109 +804,46 @@ class TokenSwapper {
             // Dynamically estimate gas exactly from the blockchain
             const gasLimit = await this.estimateGas(txTemplate);
             
-            // Create transaction with only legacy gas parameters
-            const directSwapTransaction = {
+            // Create transaction with gas parameters
+            const swapTransaction = {
                 ...txTemplate,
                 gas: gasLimit,
                 gasPrice: gasPrice
             };
             
-            // Sign transaction
-            const signedTx = await this.web3.eth.accounts.signTransaction(directSwapTransaction, this.account.privateKey);
+            // Use the enhanced sendTransaction method
+            const swapResult = await this.sendTransaction(
+                swapTransaction, 
+                `Swap from ${fromToken} to ${toToken}`,
+                retryCount
+            );
             
-            // Display transaction hash immediately after signing
-            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Transaction created: ${signedTx.transactionHash}`));
+            // Add a delay after swap regardless of success to avoid rate limits
+            const cooldownDelay = 5000 + Math.random() * 2000;
+            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Cooling down for ${Math.round(cooldownDelay/1000)}s after swap...`));
+            await new Promise(resolve => setTimeout(resolve, cooldownDelay));
             
-            // Increment the nonce before sending the transaction
-            this.incrementNonce();
-            this.pendingTransactions++;
-            
-            // Create a spinner for better UX during confirmation waiting
-            const spinner = ora({
-                text: chalk.cyan(`${getTimestamp(this.walletNum)} Sending transaction...`),
-                spinner: 'dots'
-            }).start();
-            
-            try {
-                // Send raw transaction using direct JSON-RPC call (avoids Web3's confirmation system)
-                const txHash = await this.sendRawTransaction(signedTx);
-                
-                spinner.text = chalk.cyan(`${getTimestamp(this.walletNum)} Transaction submitted with hash: ${txHash}`);
-                
-                // Wait a moment for the transaction to propagate
-                await new Promise(resolve => setTimeout(resolve, 3000));
-                
-                // Now manually check for transaction confirmation with custom timeout
-                let confirmed = false;
-                let receipt = null;
-                const maxAttempts = 50; // 50 attempts with 3-second interval = ~90 seconds max wait
-                let attempts = 0;
-                
-                while (!confirmed && attempts < maxAttempts) {
-                    attempts++;
-                    try {
-                        // Try to get the transaction receipt
-                        receipt = await this.web3.eth.getTransactionReceipt(txHash);
-                        
-                        if (receipt && receipt.blockNumber) {
-                            // Transaction is confirmed
-                            confirmed = true;
-                            spinner.text = chalk.cyan(`${getTimestamp(this.walletNum)} Transaction confirmed in block ${receipt.blockNumber}`);
-                        } else {
-                            // Transaction is still pending
-                            spinner.text = chalk.cyan(`${getTimestamp(this.walletNum)} Waiting for confirmation... (attempt ${attempts}/${maxAttempts})`);
-                            // Wait before the next check
-                            await new Promise(resolve => setTimeout(resolve, 3000));
-                        }
-                    } catch (error) {
-                        // Error checking receipt, but transaction might still be confirming
-                        spinner.text = chalk.cyan(`${getTimestamp(this.walletNum)} Checking status... (attempt ${attempts}/${maxAttempts})`);
-                        await new Promise(resolve => setTimeout(resolve, 3000));
-                    }
-                }
-                
-                this.pendingTransactions--;
-                
-                if (confirmed) {
-                    // Check transaction status (success = 1, failure = 0)
-                    if (receipt.status) {
-                        spinner.succeed(chalk.green(`${getTimestamp(this.walletNum)} ✓ Direct swap from ${fromToken} to ${toToken} successful: ${receipt.transactionHash}`));
-                        
-                        // Add a cooldown after successful confirmation
-                        await new Promise(resolve => setTimeout(resolve, 5000));
-                        
-                        return {
-                            success: true,
-                            txHash: receipt.transactionHash
-                        };
-                    } else {
-                        // Transaction was mined but failed (e.g. due to out of gas or revert)
-                        spinner.fail(chalk.red(`${getTimestamp(this.walletNum)} ✗ Transaction was mined but failed (reverted). TX: ${receipt.transactionHash}`));
-                        return {
-                            success: false,
-                            error: `Transaction reverted. TX: ${receipt.transactionHash}`
-                        };
-                    }
-                } else {
-                    // Transaction didn't confirm within the timeout period
-                    spinner.warn(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Transaction not confirmed within timeout period. It may still complete later. TX: ${txHash}`));
-                    
-                    return {
-                        success: false,
-                        error: `Transaction not confirmed within timeout. TX: ${txHash}. It may still complete later.`
-                    };
-                }
-            } catch (error) {
-                this.pendingTransactions--;
-                spinner.fail(chalk.red(`${getTimestamp(this.walletNum)} ✗ Transaction failed: ${error.message}`));
-                return { 
-                    success: false, 
-                    error: error.message 
-                };
-            }
+            return swapResult;
             
         } catch (error) {
             console.log(chalk.red(`${getTimestamp(this.walletNum)} ✗ Error swapping ${fromToken} to ${toToken}: ${error.message}`));
+            
+            // Handle retry logic
+            if (retryCount < this.config.max_retries) {
+                const delay = this.getRetryDelay(error.message, retryCount + 1);
+                console.log(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Will retry in ${Math.round(delay/1000)}s...`));
+                
+                // Wait before retrying
+                await new Promise(resolve => setTimeout(resolve, delay));
+                
+                // If applicable, try with different RPC
+                if (this.config.mempool_options.rpc_rotation_enabled) {
+                    await this.rotateRpc();
+                }
+                
+                return this.swapTokens(fromToken, toToken, amount, retryCount + 1);
+            }
+            
             return { 
                 success: false, 
                 error: error.message 
@@ -723,7 +851,7 @@ class TokenSwapper {
         }
     }
     
-    // Run all faucet claims
+    // Run all faucet claims with enhanced retry logic
     async claimAllFaucets() {
         if (!this.config.enable_onchain_faucet) {
             console.log(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Onchain faucet claims disabled in config`));
@@ -747,9 +875,14 @@ class TokenSwapper {
                 if (result.success) {
                     success = true;
                 } else {
-                    const waitTime = Math.pow(2, attempts) * 1000;
-                    console.log(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Retrying in ${waitTime/1000}s...`));
+                    const waitTime = this.getRetryDelay(result.error, attempts);
+                    console.log(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Retrying in ${Math.round(waitTime/1000)}s...`));
                     await new Promise(resolve => setTimeout(resolve, waitTime));
+                    
+                    // If the error suggests mempool issues, try rotating RPC
+                    if (result.error.includes("mempool") && this.config.mempool_options.rpc_rotation_enabled) {
+                        await this.rotateRpc();
+                    }
                 }
             }
             
@@ -759,7 +892,7 @@ class TokenSwapper {
             
             // Add delay between claims
             if (tokens.indexOf(token) < tokens.length - 1) {
-                const delay = Math.random() * 5000 + 5000; // 5-10 second delay
+                const delay = 5000 + Math.random() * 5000; // 5-10 second delay
                 console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Waiting ${Math.round(delay/1000)}s between claims...`));
                 await new Promise(resolve => setTimeout(resolve, delay));
             }
@@ -809,8 +942,13 @@ class TokenSwapper {
                         i = swapCount; // Exit the loop
                         break;
                     } else {
-                        const waitTime = Math.pow(2, attempts) * 1000;
-                        console.log(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Retrying in ${waitTime/1000}s...`));
+                        // If it's a mempool error, try a longer delay and RPC rotation
+                        if (result.error.includes("mempool") && this.config.mempool_options.rpc_rotation_enabled) {
+                            await this.rotateRpc();
+                        }
+                        
+                        const waitTime = this.getRetryDelay(result.error, attempts);
+                        console.log(chalk.yellow(`${getTimestamp(this.walletNum)} ⚠ Retrying in ${Math.round(waitTime/1000)}s...`));
                         await new Promise(resolve => setTimeout(resolve, waitTime));
                     }
                 }
@@ -821,7 +959,7 @@ class TokenSwapper {
                 
                 // Add longer delay between swaps to allow transactions to be mined
                 if (i < swapCount - 1) {
-                    const delay = Math.random() * 8000 + 7000; // 7-15 second delay
+                    const delay = 7000 + Math.random() * 8000; // 7-15 second delay
                     console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Waiting ${Math.round(delay/1000)}s for transaction to be mined before next swap...`));
                     await new Promise(resolve => setTimeout(resolve, delay));
                 }
@@ -829,7 +967,7 @@ class TokenSwapper {
             
             // Add longer delay between pairs
             if (swapPairs.indexOf(pair) < swapPairs.length - 1) {
-                const delay = Math.random() * 8000 + 7000; // 7-15 second delay
+                const delay = 7000 + Math.random() * 8000; // 7-15 second delay
                 console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Waiting ${Math.round(delay/1000)}s between pairs...`));
                 await new Promise(resolve => setTimeout(resolve, delay));
             }
@@ -839,7 +977,97 @@ class TokenSwapper {
         return true;
     }
     
-    // Run the full token operation cycle
+    // NEW: Replace a stuck transaction with higher gas price
+    async replaceTransaction(txHash, increaseFactor = 1.5) {
+        try {
+            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Attempting to replace transaction: ${txHash}`));
+            
+            // Get the original transaction
+            const tx = await this.web3.eth.getTransaction(txHash);
+            if (!tx) {
+                throw new Error("Transaction not found");
+            }
+            
+            // Make sure it's our transaction
+            if (tx.from.toLowerCase() !== this.account.address.toLowerCase()) {
+                throw new Error("Not our transaction");
+            }
+            
+            // Make sure it's still pending
+            const receipt = await this.web3.eth.getTransactionReceipt(txHash);
+            if (receipt && receipt.blockNumber) {
+                throw new Error("Transaction already confirmed");
+            }
+            
+            // Calculate new gas price (at least 10% higher than original)
+            const minIncrease = increaseFactor > 1.1 ? increaseFactor : 1.1;
+            const newGasPrice = BigInt(Math.floor(Number(tx.gasPrice) * minIncrease));
+            
+            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ Original gas price: ${this.web3.utils.fromWei(tx.gasPrice, 'gwei')} gwei`));
+            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ New gas price: ${this.web3.utils.fromWei(newGasPrice.toString(), 'gwei')} gwei (${minIncrease}x)`));
+            
+            // Create a replacement transaction
+            const replacementTx = {
+                from: tx.from,
+                to: tx.to,
+                data: tx.input,
+                nonce: tx.nonce,
+                gas: tx.gas,
+                gasPrice: newGasPrice.toString(),
+                chainId: this.chainId
+            };
+            
+            // Sign and send the replacement
+            const signedTx = await this.web3.eth.accounts.signTransaction(replacementTx, this.account.privateKey);
+            
+            // Send the raw transaction
+            const newTxHash = await this.sendRawTransaction(signedTx);
+            
+            console.log(chalk.green(`${getTimestamp(this.walletNum)} ✓ Replacement transaction sent: ${newTxHash}`));
+            
+            return {
+                success: true,
+                oldTxHash: txHash,
+                newTxHash: newTxHash
+            };
+            
+        } catch (error) {
+            console.log(chalk.red(`${getTimestamp(this.walletNum)} ✗ Error replacing transaction: ${error.message}`));
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+    
+    // NEW: Attempt to replace all stuck transactions
+    async replaceStuckTransactions() {
+        if (this.failedTransactions.length === 0) {
+            console.log(chalk.cyan(`${getTimestamp(this.walletNum)} ℹ No stuck transactions to replace`));
+            return true;
+        }
+        
+        console.log(chalk.blue(`${getTimestamp(this.walletNum)} Attempting to replace ${this.failedTransactions.length} stuck transactions...`));
+        
+        for (const tx of this.failedTransactions) {
+            // Try to replace the transaction
+            const result = await this.replaceTransaction(tx.hash, 1.5);
+            
+            if (result.success) {
+                // Remove from the list if replaced successfully
+                this.failedTransactions = this.failedTransactions.filter(t => t.hash !== tx.hash);
+            }
+            
+            // Add delay between replacements
+            if (this.failedTransactions.indexOf(tx) < this.failedTransactions.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 3000));
+            }
+        }
+        
+        return true;
+    }
+    
+    // Run the full token operation cycle with enhanced error handling
     async executeTokenOperations() {
         console.log(chalk.blue.bold(`${getTimestamp(this.walletNum)} Starting token operations...`));
         
@@ -852,6 +1080,11 @@ class TokenSwapper {
             
             // Step 2: Execute all token swaps
             await this.executeAllSwaps();
+            
+            // Step 3: Check and replace any stuck transactions
+            if (this.failedTransactions.length > 0) {
+                await this.replaceStuckTransactions();
+            }
             
             console.log(chalk.green(`${getTimestamp(this.walletNum)} ✓ Token operations completed successfully!`));
             return true;
